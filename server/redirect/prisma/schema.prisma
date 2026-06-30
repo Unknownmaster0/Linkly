@@ -1,0 +1,23 @@
+// Minimal schema for the redirect server — only the Url model fields
+// needed for GET /:shortCode → 302. Migrations are owned by api/.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Url {
+  id          BigInt    @id @default(autoincrement())
+  shortCode   String    @unique @map("short_code") @db.VarChar(50)
+  originalUrl String    @map("original_url") @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  isDeleted   Boolean   @default(false) @map("is_deleted")
+  isFlagged   Boolean   @default(false) @map("is_flagged")
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  @@map("urls")
+}

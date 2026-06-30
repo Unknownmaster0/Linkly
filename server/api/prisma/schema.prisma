@@ -1,0 +1,147 @@
+// URL Shortener — Prisma schema
+// Reference: docs/db/db-design.md
+// Conventions: camelCase in client, snake_case in DB via @map / @@map.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Enums
+// ──────────────────────────────────────────────────────────────────────────────
+
+enum Plan {
+  free
+  pro
+  enterprise
+}
+
+enum DeviceType {
+  mobile
+  desktop
+  tablet
+  bot
+  unknown
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Users
+// ──────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  name         String   @db.VarChar(100)
+  plan         Plan     @default(free)
+  isVerified   Boolean  @default(false) @map("is_verified")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  refreshTokens RefreshToken[]
+  urls          Url[]
+
+  @@index([plan])
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Refresh tokens (server-side, for revocation)
+// ──────────────────────────────────────────────────────────────────────────────
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  userAgent  String    @map("user_agent") @db.VarChar(500)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  // Partial indexes (WHERE revoked_at IS NULL) on (user_id) and (expires_at)
+  // are managed by the schema_augmentation raw-SQL migration.
+  @@map("refresh_tokens")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Shortened URLs
+// ──────────────────────────────────────────────────────────────────────────────
+
+model Url {
+  id           BigInt    @id @default(autoincrement())
+  shortCode    String    @unique @map("short_code") @db.VarChar(50)
+  originalUrl  String    @map("original_url") @db.Text
+  userId       String?   @map("user_id") @db.Uuid
+  customAlias  String?   @unique @map("custom_alias") @db.VarChar(50)
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6)
+  clickCount   BigInt    @default(0) @map("click_count")
+  isActive     Boolean   @default(true) @map("is_active")
+  isDeleted    Boolean   @default(false) @map("is_deleted")
+  isFlagged    Boolean   @default(false) @map("is_flagged")
+  tags         String[]  @default([])
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user                     User?                     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  clickEvents              ClickEvent[]
+  dailyAnalyticsAggregates DailyAnalyticsAggregate[]
+
+  // Partial indexes (WHERE is_deleted = false) on (user_id, created_at DESC)
+  // and (expires_at), plus a GIN tsvector index on original_url, are managed
+  // by the schema_augmentation raw-SQL migration.
+  @@map("urls")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Raw click events (eventually consistent, written async via BullMQ)
+// NOTE: Monthly RANGE partitioning per docs/db/db-design.md is deferred —
+// will be introduced via a partition-swap migration before production load.
+// ──────────────────────────────────────────────────────────────────────────────
+
+model ClickEvent {
+  id              BigInt     @id @default(autoincrement())
+  urlId           BigInt     @map("url_id")
+  clickedAt       DateTime   @default(now()) @map("clicked_at") @db.Timestamptz(6)
+  ipHash          String     @map("ip_hash") @db.VarChar(64)
+  countryCode     String?    @map("country_code") @db.Char(2)
+  city            String?    @db.VarChar(100)
+  deviceType      DeviceType @default(unknown) @map("device_type")
+  browser         String?    @db.VarChar(50)
+  os              String?    @db.VarChar(50)
+  referrerDomain  String?    @map("referrer_domain") @db.VarChar(255)
+  isUnique        Boolean    @default(false) @map("is_unique")
+
+  url Url @relation(fields: [urlId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([urlId, clickedAt(sort: Desc)])
+  @@map("click_events")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Daily pre-aggregated analytics (populated by nightly job)
+// ──────────────────────────────────────────────────────────────────────────────
+
+model DailyAnalyticsAggregate {
+  urlId            BigInt   @map("url_id")
+  date             DateTime @db.Date
+  totalClicks      Int      @default(0) @map("total_clicks")
+  uniqueClicks     Int      @default(0) @map("unique_clicks")
+  topCountries     Json     @default("{}") @map("top_countries") @db.JsonB
+  topReferrers     Json     @default("{}") @map("top_referrers") @db.JsonB
+  deviceBreakdown  Json     @default("{}") @map("device_breakdown") @db.JsonB
+
+  url Url @relation(fields: [urlId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@id([urlId, date])
+  @@index([date(sort: Desc)])
+  @@map("daily_analytics_aggregates")
+}

@@ -1,0 +1,23 @@
+{
+  "skill_name": "validate-implementation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "validate the implementation",
+      "expected_output": "A structured compliance report covering all six dimensions (API Contract, Error Envelope, Exception Architecture, Project Structure, System Design Decisions, Prisma Error Mapping) with ✅/❌/⚠️ markers, file:line citations for violations, and a Priority Fix List.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "audit my implementation against the API contract docs — I want to know exactly what's implemented wrong, not just what's missing",
+      "expected_output": "A report that clearly distinguishes ❌ VIOLATIONS (existing code that contradicts the spec) from ⚠️ MISSING (not yet implemented). Should catch specific issues like the error envelope shape (success field), response wrapping, health route try-catch, and TTL defaulting behavior.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "check compliance of the routes and error handling — I just finished Day 3 of the plan so auth and redirect aren't implemented yet",
+      "expected_output": "Report that correctly marks auth routes and redirect as ⚠️ MISSING (expected for Day 3), while still surfacing ❌ VIOLATIONS in what IS implemented. The Priority Fix List should only contain violations, not missing features.",
+      "files": []
+    }
+  ]
+}

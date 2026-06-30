@@ -1,0 +1,2 @@
+1. What if the same user/diff user come with same url to shorten, how to handle that?
+-- We have to allow this, as the same user may want to shorten the same URL for different purposes. We can generate a unique short code for each request, even if the original URL is the same.

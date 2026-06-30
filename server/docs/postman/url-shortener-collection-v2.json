@@ -1,0 +1,518 @@
+﻿{
+  "info": {
+    "_postman_id": "f2c9b6a4-7d1e-4a32-9c8b-220e7a9d51ff",
+    "name": "URL Shortener — v2 (Days 1-9: Analytics)",
+    "description": "Cumulative API test suite through Day 9. Reuses the Day 1-4 auth/shorten setup so it runs standalone, then adds the Day 7 + Day 9 Analytics suite: redirect-driven click generation (redirect server :3001), async worker processing, the locked GET /api/analytics/:shortCode summary, the paginated /events endpoint, and the 404 ownership/IDOR case.\n\nPREREQS:\n  1. Run all three processes: api (:3000), redirect (:3001), worker.\n  2. Postman → Settings → 'Automatically follow redirects: OFF'.\n  3. Clicks are processed ASYNC by the worker; the Analytics Summary request waits ~4s in its pre-request script before asserting. If running via the collection runner under heavy load, add a per-request Delay of ~3000ms as well.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url",            "value": "http://localhost:3000", "type": "string" },
+    { "key": "redirect_base_url",   "value": "http://localhost:3001", "type": "string" },
+    { "key": "access_token",        "value": "",                      "type": "string" },
+    { "key": "second_access_token", "value": "",                      "type": "string" },
+    { "key": "short_code",          "value": "",                      "type": "string" },
+    { "key": "test_email",          "value": "",                      "type": "string" },
+    { "key": "second_email",        "value": "",                      "type": "string" },
+    { "key": "test_password",       "value": "Password123",           "type": "string" }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (pm.response.code >= 400) {",
+          "    pm.test('[envelope] error is a string, no success key', function () {",
+          "        var b = pm.response.json();",
+          "        pm.expect(b.error).to.be.a('string');",
+          "        pm.expect(b.success).to.be.undefined;",
+          "    });",
+          "    if (pm.response.code === 429) {",
+          "        pm.test('[envelope] 429 includes retryAfter number', function () {",
+          "            pm.expect(pm.response.json().retryAfter).to.be.a('number');",
+          "        });",
+          "    }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Setup (Auth + Create URL)",
+      "item": [
+        {
+          "name": "✅ Register (primary user)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('test_email', 'analytics_' + Date.now() + '@example.com');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Returns accessToken', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.accessToken).to.be.a('string');",
+                  "    pm.collectionVariables.set('access_token', b.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\",\n  \"name\": \"Analytics User\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "✅ Register (second user — for ownership test)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('second_email', 'attacker_' + Date.now() + '@example.com');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Stores second user accessToken', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.accessToken).to.be.a('string');",
+                  "    pm.collectionVariables.set('second_access_token', b.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{second_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\",\n  \"name\": \"Second User\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "✅ Shorten — Basic (owned by primary user)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Stores short_code', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.shortCode).to.be.a('string');",
+                  "    pm.collectionVariables.set('short_code', d.shortCode);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/analytics-target\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Generate Clicks (redirect server :3001)",
+      "description": "Hits the redirect server to enqueue click events (fire-and-forget). Referer + User-Agent headers exercise the worker's referrer/device enrichment. Requires 'Follow redirects: OFF'.",
+      "item": [
+        {
+          "name": "✅ Click 1 — referer twitter.com (302)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 302 Found', function () { pm.response.to.have.status(302); });",
+                  "pm.test('Location header present', function () {",
+                  "    pm.expect(pm.response.headers.get('Location')).to.include('://');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Referer", "value": "https://twitter.com/someuser/status/1" },
+              { "key": "User-Agent", "value": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" }
+            ],
+            "url": {
+              "raw": "{{redirect_base_url}}/{{short_code}}",
+              "host": ["{{redirect_base_url}}"],
+              "path": ["{{short_code}}"]
+            }
+          }
+        },
+        {
+          "name": "✅ Click 2 — referer twitter.com (302)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 302 Found', function () { pm.response.to.have.status(302); });"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Referer", "value": "https://twitter.com/someuser/status/2" },
+              { "key": "User-Agent", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" }
+            ],
+            "url": {
+              "raw": "{{redirect_base_url}}/{{short_code}}",
+              "host": ["{{redirect_base_url}}"],
+              "path": ["{{short_code}}"]
+            }
+          }
+        },
+        {
+          "name": "✅ Click 3 — no referer / direct (302)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 302 Found', function () { pm.response.to.have.status(302); });"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "User-Agent", "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" }
+            ],
+            "url": {
+              "raw": "{{redirect_base_url}}/{{short_code}}",
+              "host": ["{{redirect_base_url}}"],
+              "path": ["{{short_code}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Analytics (Day 7 + 9)",
+      "item": [
+        {
+          "name": "✅ Summary — owner (200) [waits ~4s for async worker]",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Clicks are processed asynchronously by the worker. Give it time",
+                  "// before asserting. Postman/Newman honor this setTimeout.",
+                  "setTimeout(function () {}, 4000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "var b = pm.response.json();",
+                  "pm.test('Envelope: success/message/data', function () {",
+                  "    pm.expect(b.success).to.be.true;",
+                  "    pm.expect(b.data).to.be.an('object');",
+                  "});",
+                  "var d = b.data;",
+                  "pm.test('Locked summary shape present', function () {",
+                  "    pm.expect(d.shortCode).to.be.a('string');",
+                  "    pm.expect(d.originalUrl).to.be.a('string');",
+                  "    pm.expect(d.createdAt).to.be.a('string');",
+                  "    pm.expect(d).to.have.property('expiresAt');",
+                  "    pm.expect(d.totalClicks).to.be.a('number');",
+                  "    pm.expect(d.last7Days).to.be.a('number');",
+                  "    pm.expect(d.last30Days).to.be.a('number');",
+                  "    pm.expect(d.dailyBreakdown).to.be.an('array');",
+                  "    pm.expect(d.topReferrers).to.be.an('array');",
+                  "    pm.expect(d.countries).to.be.an('array');",
+                  "});",
+                  "pm.test('Clicks recorded (totalClicks >= 1)', function () {",
+                  "    pm.expect(d.totalClicks).to.be.at.least(1);",
+                  "    pm.expect(d.dailyBreakdown.length).to.be.at.least(1);",
+                  "});",
+                  "pm.test('No raw IP / ipHash leaked in summary', function () {",
+                  "    var s = JSON.stringify(d);",
+                  "    pm.expect(s).to.not.include('ipHash');",
+                  "    pm.expect(s).to.not.include('ip_hash');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "{{short_code}}"]
+            }
+          }
+        },
+        {
+          "name": "✅ Events — owner, paginated (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "var d = pm.response.json().data;",
+                  "pm.test('Paginated events envelope', function () {",
+                  "    pm.expect(d.events).to.be.an('array');",
+                  "    pm.expect(d.total).to.be.a('number');",
+                  "    pm.expect(d.limit).to.be.a('number');",
+                  "    pm.expect(d.offset).to.be.a('number');",
+                  "});",
+                  "pm.test('Event rows have expected fields, no IP fields', function () {",
+                  "    if (d.events.length > 0) {",
+                  "        var e = d.events[0];",
+                  "        pm.expect(e.id).to.be.a('string');",
+                  "        pm.expect(e.clickedAt).to.be.a('string');",
+                  "        pm.expect(e).to.have.property('deviceType');",
+                  "        pm.expect(e.ipHash).to.be.undefined;",
+                  "        pm.expect(e.ip).to.be.undefined;",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}/events?limit=10&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "{{short_code}}", "events"],
+              "query": [
+                { "key": "limit", "value": "10" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "✅ Events — limit=1 honored (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Returns at most 1 event', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.limit).to.eql(1);",
+                  "    pm.expect(d.events.length).to.be.at.most(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}/events?limit=1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "{{short_code}}", "events"],
+              "query": [{ "key": "limit", "value": "1" }]
+            }
+          }
+        },
+        {
+          "name": "❌ Summary — No Auth (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "disabled": true }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "{{short_code}}"]
+            }
+          }
+        },
+        {
+          "name": "❌ Summary — Unknown Code (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/zzzzzzzzz",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "zzzzzzzzz"]
+            }
+          }
+        },
+        {
+          "name": "❌ Summary — Other User's URL → 404 (IDOR, not 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404 (never 403 — no existence leak)', function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "pm.test('Body is the generic Not found envelope', function () {",
+                  "    pm.expect(pm.response.json().error).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{second_access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "{{short_code}}"]
+            }
+          }
+        },
+        {
+          "name": "❌ Events — Other User's URL → 404 (IDOR)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{second_access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}/events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "{{short_code}}", "events"]
+            }
+          }
+        },
+        {
+          "name": "❌ Events — Invalid limit=0 (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}/events?limit=0",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "{{short_code}}", "events"],
+              "query": [{ "key": "limit", "value": "0" }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

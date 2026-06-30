@@ -1,0 +1,974 @@
+﻿{
+  "info": {
+    "_postman_id": "a1b2c3d4-5e6f-4708-9a1b-fullsuite0009",
+    "name": "URL Shortener — Full Suite (Days 1-9)",
+    "description": "Cumulative end-to-end test suite for the URL shortener, Day 1 through Day 9. One collection that runs standalone from a clean DB and exercises every implemented surface:\n\n  • Day 1-2  Health + Auth (register/login/refresh/logout, validation, no-enumeration)\n  • Day 3    URL shortening (Base62, custom alias, ttl)\n  • Day 4-5  Redirect 302 (cache-aside) on the redirect server\n  • Day 6    Rate-limit headers\n  • Day 7+9  Async analytics (clicks → worker → summary/events) + IDOR\n  • Day 8    Input validation edge cases, helmet security headers, CORS allow-list\n\nPREREQUISITES\n  1. Run all three processes:  api (:3000),  redirect (:3001),  worker.\n  2. Postman → Settings → 'Automatically follow redirects: OFF' (so 302s are visible).\n  3. Clicks are processed ASYNC by the worker; the Analytics Summary request waits ~4s in a pre-request script. Under the collection runner add a per-request Delay of ~3000ms for safety.\n\nThis collection generates unique emails/aliases per run (Date.now()), so it is safe to re-run without manual cleanup.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url",            "value": "http://localhost:3000", "type": "string" },
+    { "key": "redirect_base_url",   "value": "http://localhost:3001", "type": "string" },
+    { "key": "client_origin",       "value": "http://localhost:3002", "type": "string" },
+    { "key": "access_token",        "value": "",                      "type": "string" },
+    { "key": "second_access_token", "value": "",                      "type": "string" },
+    { "key": "short_code",          "value": "",                      "type": "string" },
+    { "key": "alias_code",          "value": "",                      "type": "string" },
+    { "key": "test_email",          "value": "",                      "type": "string" },
+    { "key": "second_email",        "value": "",                      "type": "string" },
+    { "key": "test_password",       "value": "Password123",           "type": "string" }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Collection-wide envelope guard for every error response.",
+          "if (pm.response.code >= 400) {",
+          "    var ct = pm.response.headers.get('Content-Type') || '';",
+          "    if (ct.indexOf('application/json') !== -1) {",
+          "        pm.test('[envelope] error is a string, no success key', function () {",
+          "            var b = pm.response.json();",
+          "            pm.expect(b.error).to.be.a('string');",
+          "            pm.expect(b.success).to.be.undefined;",
+          "        });",
+          "        if (pm.response.code === 429) {",
+          "            pm.test('[envelope] 429 includes retryAfter number', function () {",
+          "                pm.expect(pm.response.json().retryAfter).to.be.a('number');",
+          "            });",
+          "        }",
+          "        if (pm.response.code === 400) {",
+          "            pm.test('[envelope] 400 details is object if present', function () {",
+          "                var b = pm.response.json();",
+          "                if (b.details !== undefined) { pm.expect(b.details).to.be.an('object'); }",
+          "            });",
+          "        }",
+          "    }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health",
+      "item": [
+        {
+          "name": "✅ GET /health (200, db ok)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('status ok, db ok, timestamp present', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('ok');",
+                  "    pm.expect(b.db).to.eql('ok');",
+                  "    pm.expect(b.timestamp).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Security Headers & CORS (Day 8)",
+      "description": "Verifies helmet headers ride on every response (api + redirect) and that CORS is a credentialed allow-list, never a wildcard.",
+      "item": [
+        {
+          "name": "✅ API helmet headers on /health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Frame-Options: DENY', function () {",
+                  "    pm.expect(pm.response.headers.get('X-Frame-Options')).to.eql('DENY');",
+                  "});",
+                  "pm.test('X-Content-Type-Options: nosniff', function () {",
+                  "    pm.expect(pm.response.headers.get('X-Content-Type-Options')).to.eql('nosniff');",
+                  "});",
+                  "pm.test('HSTS max-age=31536000 (1 year)', function () {",
+                  "    var hsts = pm.response.headers.get('Strict-Transport-Security') || '';",
+                  "    pm.expect(hsts).to.include('max-age=31536000');",
+                  "});",
+                  "pm.test('Content-Security-Policy present', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Security-Policy')).to.be.a('string');",
+                  "});",
+                  "pm.test('Referrer-Policy present', function () {",
+                  "    pm.expect(pm.response.headers.get('Referrer-Policy')).to.be.a('string');",
+                  "});",
+                  "pm.test('X-Powered-By stripped', function () {",
+                  "    pm.expect(pm.response.headers.has('X-Powered-By')).to.be.false;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "✅ CORS preflight — allowed origin (echoed + credentials)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Preflight 204', function () { pm.response.to.have.status(204); });",
+                  "pm.test('Allow-Origin echoes the allowed origin (not *)', function () {",
+                  "    var acao = pm.response.headers.get('Access-Control-Allow-Origin');",
+                  "    pm.expect(acao).to.eql(pm.collectionVariables.get('client_origin'));",
+                  "    pm.expect(acao).to.not.eql('*');",
+                  "});",
+                  "pm.test('Allow-Credentials: true', function () {",
+                  "    pm.expect(pm.response.headers.get('Access-Control-Allow-Credentials')).to.eql('true');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "OPTIONS",
+            "header": [
+              { "key": "Origin", "value": "{{client_origin}}" },
+              { "key": "Access-Control-Request-Method", "value": "POST" },
+              { "key": "Access-Control-Request-Headers", "value": "authorization,content-type" }
+            ],
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "✅ CORS preflight — disallowed origin (not echoed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Disallowed origin is NOT echoed back', function () {",
+                  "    var acao = pm.response.headers.get('Access-Control-Allow-Origin');",
+                  "    if (acao) { pm.expect(acao).to.not.eql('http://evil.example.com'); }",
+                  "    else { pm.expect(acao).to.not.exist; }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "OPTIONS",
+            "header": [
+              { "key": "Origin", "value": "http://evil.example.com" },
+              { "key": "Access-Control-Request-Method", "value": "POST" }
+            ],
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "✅ Redirect server helmet headers (on 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('Hardening headers present even on error path', function () {",
+                  "    pm.expect(pm.response.headers.get('X-Frame-Options')).to.eql('DENY');",
+                  "    pm.expect(pm.response.headers.get('X-Content-Type-Options')).to.eql('nosniff');",
+                  "    pm.expect(pm.response.headers.get('Strict-Transport-Security')).to.include('max-age=31536000');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{redirect_base_url}}/zzz-no-such-code", "host": ["{{redirect_base_url}}"], "path": ["zzz-no-such-code"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Auth (Days 2)",
+      "item": [
+        {
+          "name": "Register",
+          "item": [
+            {
+              "name": "✅ Register — primary user (201, stores token)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": { "type": "text/javascript", "exec": [
+                    "pm.collectionVariables.set('test_email', 'user_' + Date.now() + '@example.com');"
+                  ] }
+                },
+                {
+                  "listen": "test",
+                  "script": { "type": "text/javascript", "exec": [
+                    "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                    "pm.test('Returns accessToken + user', function () {",
+                    "    var b = pm.response.json();",
+                    "    pm.expect(b.accessToken).to.be.a('string');",
+                    "    pm.expect(b.user.email).to.eql(pm.collectionVariables.get('test_email'));",
+                    "    pm.collectionVariables.set('access_token', b.accessToken);",
+                    "});",
+                    "pm.test('Sets httpOnly refreshToken cookie', function () {",
+                    "    pm.expect(pm.cookies.has('refreshToken')).to.be.true;",
+                    "});"
+                  ] }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\",\n  \"name\": \"Primary User\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            },
+            {
+              "name": "✅ Register — second user (201, for IDOR test)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": { "type": "text/javascript", "exec": [
+                    "pm.collectionVariables.set('second_email', 'attacker_' + Date.now() + '@example.com');"
+                  ] }
+                },
+                {
+                  "listen": "test",
+                  "script": { "type": "text/javascript", "exec": [
+                    "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                    "pm.test('Stores second user accessToken', function () {",
+                    "    pm.collectionVariables.set('second_access_token', pm.response.json().accessToken);",
+                    "    pm.expect(pm.collectionVariables.get('second_access_token')).to.be.a('string');",
+                    "});"
+                  ] }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{second_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\",\n  \"name\": \"Second User\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            },
+            {
+              "name": "❌ Register — Missing Email (400)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            },
+            {
+              "name": "❌ Register — Invalid Email Format (400)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"not-an-email\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            },
+            {
+              "name": "❌ Register — Password Too Short (400)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"Ab1\",\n  \"confirmPassword\": \"Ab1\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            },
+            {
+              "name": "❌ Register — No Number (400)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"PasswordOnly\",\n  \"confirmPassword\": \"PasswordOnly\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            },
+            {
+              "name": "❌ Register — No Uppercase (400) [Day 8 rule]",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status 400 — uppercase now required', function () { pm.response.to.have.status(400); });"
+              ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"alllower123\",\n  \"confirmPassword\": \"alllower123\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            },
+            {
+              "name": "❌ Register — Passwords Don't Match (400)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"Different999\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            },
+            {
+              "name": "❌ Register — Duplicate Email (409)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 409 Conflict', function () { pm.response.to.have.status(409); });" ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "item": [
+            {
+              "name": "✅ Login — Valid (200, refreshes token + cookie)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                "pm.test('Returns accessToken', function () {",
+                "    pm.collectionVariables.set('access_token', pm.response.json().accessToken);",
+                "    pm.expect(pm.collectionVariables.get('access_token')).to.be.a('string');",
+                "});",
+                "pm.test('Sets refreshToken cookie', function () { pm.expect(pm.cookies.has('refreshToken')).to.be.true; });"
+              ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
+              }
+            },
+            {
+              "name": "❌ Login — Wrong Password (401, generic)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status 401', function () { pm.response.to.have.status(401); });",
+                "pm.test('No user enumeration (generic, does not reveal which field failed)', function () {",
+                "    var e = pm.response.json().error.toLowerCase();",
+                "    pm.expect(e).to.not.include('not found');",
+                "    pm.expect(e).to.not.include('incorrect password');",
+                "});"
+              ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"WrongPass999\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
+              }
+            },
+            {
+              "name": "❌ Login — Unknown Email (401, same message)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status 401', function () { pm.response.to.have.status(401); });"
+              ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"nobody_unknown@example.com\",\n  \"password\": \"{{test_password}}\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh & Logout",
+          "item": [
+            {
+              "name": "✅ Refresh — Valid Cookie (200, rotates)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                "pm.test('Issues new accessToken', function () {",
+                "    pm.collectionVariables.set('access_token', pm.response.json().accessToken);",
+                "    pm.expect(pm.collectionVariables.get('access_token')).to.be.a('string');",
+                "});",
+                "pm.test('Rotates refreshToken cookie', function () { pm.expect(pm.cookies.has('refreshToken')).to.be.true; });"
+              ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/refresh", "host": ["{{base_url}}"], "path": ["api", "auth", "refresh"] }
+              }
+            },
+            {
+              "name": "✅ Logout — Authenticated (204, clears cookie)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status 204', function () { pm.response.to.have.status(204); });",
+                "pm.test('Set-Cookie clears refreshToken (Max-Age=0)', function () {",
+                "    pm.expect(pm.response.headers.get('Set-Cookie') || '').to.include('Max-Age=0');",
+                "});"
+              ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{access_token}}" }
+                ],
+                "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/logout", "host": ["{{base_url}}"], "path": ["api", "auth", "logout"] }
+              }
+            },
+            {
+              "name": "❌ Logout — No Bearer Token (401)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 401', function () { pm.response.to.have.status(401); });" ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{access_token}}", "disabled": true }
+                ],
+                "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/logout", "host": ["{{base_url}}"], "path": ["api", "auth", "logout"] }
+              }
+            },
+            {
+              "name": "↻ Re-Login (restore token for later folders)",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                "pm.collectionVariables.set('access_token', pm.response.json().accessToken);"
+              ] } } ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Shorten (Day 3 + Day 8 validation)",
+      "description": "Note on rate limiting: POST /api/urls is limited to 10 creates / 60s PER USER (Day 6). Every attempt — even one that will fail validation — consumes a token, because the rate-limit preHandler runs before body validation. To keep the suite green on default config, the valid creates + the first batch of negative cases run as the PRIMARY user (10 total), and the remaining negative cases run as the SECOND user (Bearer {{second_access_token}}). Validation outcome is independent of which user is authenticated, so this is purely to stay under the per-user limit.",
+      "item": [
+        {
+          "name": "✅ Shorten — Basic (201, stores short_code)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+            "pm.test('Envelope + data shape', function () {",
+            "    var b = pm.response.json();",
+            "    pm.expect(b.success).to.be.true;",
+            "    pm.expect(b.data.shortCode).to.be.a('string');",
+            "    pm.expect(b.data.shortUrl).to.include(b.data.shortCode);",
+            "    pm.collectionVariables.set('short_code', b.data.shortCode);",
+            "});",
+            "pm.test('Rate-limit headers present (Day 6)', function () {",
+            "    pm.expect(pm.response.headers.get('X-RateLimit-Limit')).to.exist;",
+            "    pm.expect(pm.response.headers.get('X-RateLimit-Remaining')).to.exist;",
+            "});"
+          ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com/full-suite-target\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "✅ Shorten — Custom Alias (201, dynamic alias)",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('alias_code', 'alias' + Date.now());"
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+              "pm.test('Alias becomes the shortCode', function () {",
+              "    var d = pm.response.json().data;",
+              "    pm.expect(d.customAlias).to.eql(pm.collectionVariables.get('alias_code'));",
+              "    pm.expect(d.shortCode).to.eql(pm.collectionVariables.get('alias_code'));",
+              "});"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://github.com\",\n  \"customAlias\": \"{{alias_code}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "✅ Shorten — With ttlDays=30 (201)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+            "pm.test('expiresAt ~30 days out', function () {",
+            "    var diff = (new Date(pm.response.json().data.expiresAt) - new Date()) / 86400000;",
+            "    pm.expect(diff).to.be.above(29); pm.expect(diff).to.be.below(31);",
+            "});"
+          ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com/ttl-test\",\n  \"ttlDays\": 30\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — No Auth (401)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 401', function () { pm.response.to.have.status(401); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "disabled": true }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — Missing URL (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — javascript: scheme (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400 — dangerous scheme rejected', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"javascript:alert(1)\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — data: URI (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"data:text/html,<script>alert(1)</script>\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — ftp:// scheme (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"ftp://example.com/file.zip\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — SSRF Private IP 192.168.x (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400 — SSRF guard', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"http://192.168.1.1/admin\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — SSRF Localhost (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400 — SSRF guard', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"http://localhost:8080/secret\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "✅ Shorten — External public IP allowed (201)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 201 — public IP is allowed', function () { pm.response.to.have.status(201); });"
+          ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://8.8.8.8/\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — Reserved Alias 'api' (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{second_access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com\",\n  \"customAlias\": \"api\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — Reserved Alias 'admin' (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{second_access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com\",\n  \"customAlias\": \"admin\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — Alias Too Short < 3 (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{second_access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com\",\n  \"customAlias\": \"ab\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — Alias With Space (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{second_access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com\",\n  \"customAlias\": \"my alias\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — ttlDays=0 (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{second_access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com\",\n  \"ttlDays\": 0\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — ttlDays=366 (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{second_access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://example.com\",\n  \"ttlDays\": 366\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        },
+        {
+          "name": "❌ Shorten — Duplicate Custom Alias (409)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 409 Conflict', function () { pm.response.to.have.status(409); });" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{second_access_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"url\": \"https://different-site.com\",\n  \"customAlias\": \"{{alias_code}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/api/urls", "host": ["{{base_url}}"], "path": ["api", "urls"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Redirect + Generate Clicks (Days 4-5, :3001)",
+      "description": "Hits the redirect server (:3001). The first three requests enqueue click events (fire-and-forget) that the worker processes for the Analytics folder. Requires 'Follow redirects: OFF'.",
+      "item": [
+        {
+          "name": "✅ Click 1 — referer twitter.com / iPhone (302)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 302', function () { pm.response.to.have.status(302); });",
+            "pm.test('Location is a URL', function () { pm.expect(pm.response.headers.get('Location')).to.include('://'); });",
+            "pm.test('Cache-Control no-cache (302, not 301-style caching)', function () {",
+            "    pm.expect((pm.response.headers.get('Cache-Control') || '')).to.not.include('max-age=31536000');",
+            "});"
+          ] } } ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Referer", "value": "https://twitter.com/x/status/1" },
+              { "key": "User-Agent", "value": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" }
+            ],
+            "url": { "raw": "{{redirect_base_url}}/{{short_code}}", "host": ["{{redirect_base_url}}"], "path": ["{{short_code}}"] }
+          }
+        },
+        {
+          "name": "✅ Click 2 — referer twitter.com / Windows Chrome (302)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 302', function () { pm.response.to.have.status(302); });" ] } } ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Referer", "value": "https://twitter.com/x/status/2" },
+              { "key": "User-Agent", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" }
+            ],
+            "url": { "raw": "{{redirect_base_url}}/{{short_code}}", "host": ["{{redirect_base_url}}"], "path": ["{{short_code}}"] }
+          }
+        },
+        {
+          "name": "✅ Click 3 — direct / macOS Chrome (302)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 302', function () { pm.response.to.have.status(302); });" ] } } ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "User-Agent", "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" }
+            ],
+            "url": { "raw": "{{redirect_base_url}}/{{short_code}}", "host": ["{{redirect_base_url}}"], "path": ["{{short_code}}"] }
+          }
+        },
+        {
+          "name": "✅ Redirect — Custom Alias → github.com (302)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 302', function () { pm.response.to.have.status(302); });",
+            "pm.test('Location points to github.com', function () { pm.expect(pm.response.headers.get('Location')).to.include('github.com'); });"
+          ] } } ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{redirect_base_url}}/{{alias_code}}", "host": ["{{redirect_base_url}}"], "path": ["{{alias_code}}"] }
+          }
+        },
+        {
+          "name": "❌ Redirect — Non-Existent Code (404)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 404', function () { pm.response.to.have.status(404); });" ] } } ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{redirect_base_url}}/zzzzzzzzz", "host": ["{{redirect_base_url}}"], "path": ["zzzzzzzzz"] }
+          }
+        },
+        {
+          "name": "❌ Redirect — Expired URL [Manual: set expires_at in past] (410)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "// Cannot be automated: the API's min ttlDays is 1, so no URL can expire within a run.",
+            "// To exercise this: set this short_code's expires_at to a past time in the DB, then re-run.",
+            "if (pm.response.code === 410) {",
+            "    pm.test('Status 410 Gone (expired URL)', function () { pm.response.to.have.status(410); });",
+            "} else {",
+            "    pm.test.skip('410 Gone — MANUAL: set expires_at in the past first, then re-run');",
+            "}"
+          ] } } ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{redirect_base_url}}/{{short_code}}", "host": ["{{redirect_base_url}}"], "path": ["{{short_code}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Analytics (Days 7 + 9)",
+      "description": "Reads the analytics produced by the worker from the clicks generated in folder 5. The Summary request waits ~4s for async processing.",
+      "item": [
+        {
+          "name": "✅ Summary — owner (200) [waits ~4s for worker]",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "setTimeout(function () {}, 4000);"
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+              "var d = pm.response.json().data;",
+              "pm.test('Locked summary shape', function () {",
+              "    pm.expect(d.shortCode).to.be.a('string');",
+              "    pm.expect(d.originalUrl).to.be.a('string');",
+              "    pm.expect(d.totalClicks).to.be.a('number');",
+              "    pm.expect(d.last7Days).to.be.a('number');",
+              "    pm.expect(d.last30Days).to.be.a('number');",
+              "    pm.expect(d.dailyBreakdown).to.be.an('array');",
+              "    pm.expect(d.topReferrers).to.be.an('array');",
+              "    pm.expect(d.countries).to.be.an('array');",
+              "});",
+              "pm.test('Clicks recorded (totalClicks >= 1)', function () {",
+              "    pm.expect(d.totalClicks).to.be.at.least(1);",
+              "});",
+              "pm.test('No raw IP / ipHash leaked', function () {",
+              "    var s = JSON.stringify(d);",
+              "    pm.expect(s).to.not.include('ipHash');",
+              "    pm.expect(s).to.not.include('ip_hash');",
+              "});"
+            ] } }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/api/analytics/{{short_code}}", "host": ["{{base_url}}"], "path": ["api", "analytics", "{{short_code}}"] }
+          }
+        },
+        {
+          "name": "✅ Events — paginated (200, no IP fields)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+            "var d = pm.response.json().data;",
+            "pm.test('Paginated envelope', function () {",
+            "    pm.expect(d.events).to.be.an('array');",
+            "    pm.expect(d.total).to.be.a('number');",
+            "    pm.expect(d.limit).to.be.a('number');",
+            "    pm.expect(d.offset).to.be.a('number');",
+            "});",
+            "pm.test('Event rows expose no IP fields', function () {",
+            "    if (d.events.length > 0) {",
+            "        var e = d.events[0];",
+            "        pm.expect(e.clickedAt).to.be.a('string');",
+            "        pm.expect(e.ipHash).to.be.undefined;",
+            "        pm.expect(e.ip).to.be.undefined;",
+            "    }",
+            "});"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}/events?limit=10&offset=0",
+              "host": ["{{base_url}}"], "path": ["api", "analytics", "{{short_code}}", "events"],
+              "query": [ { "key": "limit", "value": "10" }, { "key": "offset", "value": "0" } ]
+            }
+          }
+        },
+        {
+          "name": "✅ Events — limit=1 honored (200)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+            "pm.test('At most 1 event', function () {",
+            "    var d = pm.response.json().data;",
+            "    pm.expect(d.limit).to.eql(1);",
+            "    pm.expect(d.events.length).to.be.at.most(1);",
+            "});"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}/events?limit=1",
+              "host": ["{{base_url}}"], "path": ["api", "analytics", "{{short_code}}", "events"],
+              "query": [ { "key": "limit", "value": "1" } ]
+            }
+          }
+        },
+        {
+          "name": "❌ Summary — No Auth (401)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 401', function () { pm.response.to.have.status(401); });" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}", "disabled": true }],
+            "url": { "raw": "{{base_url}}/api/analytics/{{short_code}}", "host": ["{{base_url}}"], "path": ["api", "analytics", "{{short_code}}"] }
+          }
+        },
+        {
+          "name": "❌ Summary — Unknown Code (404)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 404', function () { pm.response.to.have.status(404); });" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/api/analytics/zzzzzzzzz", "host": ["{{base_url}}"], "path": ["api", "analytics", "zzzzzzzzz"] }
+          }
+        },
+        {
+          "name": "❌ Summary — Other User's URL → 404 (IDOR, not 403)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 404 (never 403 — no existence leak)', function () { pm.response.to.have.status(404); });"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{second_access_token}}" }],
+            "url": { "raw": "{{base_url}}/api/analytics/{{short_code}}", "host": ["{{base_url}}"], "path": ["api", "analytics", "{{short_code}}"] }
+          }
+        },
+        {
+          "name": "❌ Events — Other User's URL → 404 (IDOR)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 404', function () { pm.response.to.have.status(404); });" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{second_access_token}}" }],
+            "url": { "raw": "{{base_url}}/api/analytics/{{short_code}}/events", "host": ["{{base_url}}"], "path": ["api", "analytics", "{{short_code}}", "events"] }
+          }
+        },
+        {
+          "name": "❌ Events — Invalid limit=0 (400)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', function () { pm.response.to.have.status(400); });" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/{{short_code}}/events?limit=0",
+              "host": ["{{base_url}}"], "path": ["api", "analytics", "{{short_code}}", "events"],
+              "query": [ { "key": "limit", "value": "0" } ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+﻿{
+  "eval_id": 1,
+  "run_type": "with_skill",
+  "expectations": [
+    {"text": "Report covers all six dimensions: API Contract, Error Envelope, Exception Handling, Project Structure, System Design Decisions, and Prisma Error Mapping", "passed": true, "evidence": "Report has clearly labeled sections for all six dimensions"},
+    {"text": "Report catches the error envelope violation: api-response.ts uses { success: false, error } but contract requires { error } with no success field", "passed": true, "evidence": "Explicitly cited utils/api-response.ts:13-17 and app.ts error handler branches"},
+    {"text": "Report catches the health route try-catch violation: health.ts has a try-catch around a DB call, which violates the zero try-catch rule for route handlers", "passed": true, "evidence": "Cited routes/health.ts:7-13 as a violation of Layer 3 rule"},
+    {"text": "Report catches the TTL defaulting violation: url.ts always sets expiresAt even when no ttlDays is provided, but spec requires expiresAt: null in that case", "passed": true, "evidence": "Cited routes/url.ts:48-54, noted expiresAt uses DEFAULT_URL_TTL_DAYS fallback instead of null"},
+    {"text": "Report uses checkmark/cross/warning markers to distinguish compliant, violated, and missing items", "passed": true, "evidence": "Report uses Compliant/Violations/Not Yet Implemented headers with appropriate content"},
+    {"text": "Priority Fix List contains only violations, not missing features", "passed": true, "evidence": "Priority Fix List items 1-7 all reference actual code violations, not unimplemented features"},
+    {"text": "At least one violation cites a specific file:line reference", "passed": true, "evidence": "Multiple file:line references throughout, e.g. routes/url.ts:154, utils/api-response.ts:6-10"}
+  ]
+}

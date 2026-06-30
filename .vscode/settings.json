@@ -1,0 +1,5 @@
+{
+  "files.associations": {
+    "**/prisma/migrations/**/*.sql": "postgres"
+  }
+}

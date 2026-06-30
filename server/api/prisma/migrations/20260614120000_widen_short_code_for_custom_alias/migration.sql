@@ -1,0 +1,12 @@
+-- Widen urls.short_code from VARCHAR(12) to VARCHAR(50).
+--
+-- Why: when a custom alias is supplied it BECOMES the short code
+-- (urls.short_code = customAlias). Custom aliases validate up to 50 chars
+-- (custom_alias is VARCHAR(50)), but short_code was VARCHAR(12), so any
+-- alias longer than 12 chars overflowed the column → Postgres 22001
+-- "value too long" → Prisma P2000 → HTTP 500 on create.
+--
+-- Increasing a VARCHAR length is a metadata-only change in PostgreSQL
+-- (no table rewrite, no data loss). The unique index on short_code is
+-- preserved.
+ALTER TABLE "urls" ALTER COLUMN "short_code" TYPE VARCHAR(50);

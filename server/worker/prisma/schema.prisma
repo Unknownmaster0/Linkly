@@ -1,0 +1,63 @@
+// Minimal schema for the analytics worker — only the models needed to:
+//   1. resolve shortCode → url id and increment the denormalized click_count
+//   2. INSERT raw click_events
+//   3. upsert daily_analytics_aggregates (nightly aggregation)
+// Migrations are owned by api/. Scalar-only (no relation fields):
+// the FKs already exist in the DB; urlId is written as a plain BIGINT.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum DeviceType {
+  mobile
+  desktop
+  tablet
+  bot
+  unknown
+}
+
+model Url {
+  id         BigInt  @id @default(autoincrement())
+  shortCode  String  @unique @map("short_code") @db.VarChar(50)
+  clickCount BigInt  @default(0) @map("click_count")
+  isDeleted  Boolean @default(false) @map("is_deleted")
+
+  @@map("urls")
+}
+
+model ClickEvent {
+  id             BigInt     @id @default(autoincrement())
+  urlId          BigInt     @map("url_id")
+  clickedAt      DateTime   @default(now()) @map("clicked_at") @db.Timestamptz(6)
+  ipHash         String     @map("ip_hash") @db.VarChar(64)
+  countryCode    String?    @map("country_code") @db.Char(2)
+  city           String?    @db.VarChar(100)
+  deviceType     DeviceType @default(unknown) @map("device_type")
+  browser        String?    @db.VarChar(50)
+  os             String?    @db.VarChar(50)
+  referrerDomain String?    @map("referrer_domain") @db.VarChar(255)
+  isUnique       Boolean    @default(false) @map("is_unique")
+
+  @@index([urlId, clickedAt(sort: Desc)])
+  @@map("click_events")
+}
+
+model DailyAnalyticsAggregate {
+  urlId           BigInt   @map("url_id")
+  date            DateTime @db.Date
+  totalClicks     Int      @default(0) @map("total_clicks")
+  uniqueClicks    Int      @default(0) @map("unique_clicks")
+  topCountries    Json     @default("{}") @map("top_countries") @db.JsonB
+  topReferrers    Json     @default("{}") @map("top_referrers") @db.JsonB
+  deviceBreakdown Json     @default("{}") @map("device_breakdown") @db.JsonB
+
+  @@id([urlId, date])
+  @@index([date(sort: Desc)])
+  @@map("daily_analytics_aggregates")
+}

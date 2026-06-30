@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npm run:*)",
+      "PowerShell(npm install:*)",
+      "PowerShell(npm ci:*)",
+      "PowerShell(npx tsc:*)",
+      "PowerShell(npx tsx:*)",
+      "PowerShell(git status:*)",
+      "PowerShell(git diff:*)",
+      "PowerShell(git log:*)"
+    ]
+  }
+}

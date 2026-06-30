@@ -1,0 +1,335 @@
+/* ============================================================================
+   URL Shortener — single source of design truth
+   ----------------------------------------------------------------------------
+   This is the ONLY stylesheet for the whole app. It defines every design token
+   (color, radius, font, texture) once; every component inherits from here.
+
+   • Brand            → Indigo / Violet (vivid "tech" identity)
+   • Theming model    → CSS variables in :root (light) + .dark (hand-tuned)
+   • Color space      → OKLCH (perceptually uniform, matches shadcn/ui)
+   • Dark mode         → deliberately NOT an inversion. Surfaces are a deep
+                         desaturated indigo-slate (never pure black), text is a
+                         soft off-white (never pure white), the brand stays
+                         vivid, and texture/glow is dialed down — to cut eye
+                         strain while keeping the brand identity.
+   • Contrast          → foreground/primary pairs target WCAG AA in both themes.
+   ========================================================================== */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ----------------------------------------------------------------------------
+   Token → Tailwind utility mapping. Exposes every CSS var below as a utility
+   (e.g. `bg-primary`, `text-muted-foreground`, `border-success`, `fill-chart-2`).
+   -------------------------------------------------------------------------- */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-accent: var(--brand-accent);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-heading: var(--font-sans);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ----------------------------------------------------------------------------
+   LIGHT THEME
+   -------------------------------------------------------------------------- */
+:root {
+  --radius: 0.7rem;
+
+  /* Surfaces — near-white with a faint cool (indigo) cast so the UI doesn't
+     read as clinical pure-white; cards stay pure white to lift off the canvas. */
+  --background: oklch(0.992 0.003 270);
+  --foreground: oklch(0.215 0.03 274);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.215 0.03 274);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.215 0.03 274);
+
+  /* Brand — Indigo (≈ indigo-600); white text on it clears AA (~6:1). */
+  --primary: oklch(0.556 0.226 277);
+  --primary-foreground: oklch(0.985 0.012 280);
+  --brand: oklch(0.556 0.226 277);
+  --brand-foreground: oklch(0.985 0.012 280);
+  --brand-accent: oklch(0.606 0.221 300); /* violet companion */
+
+  --secondary: oklch(0.966 0.011 274);
+  --secondary-foreground: oklch(0.3 0.045 276);
+  --muted: oklch(0.969 0.008 274);
+  --muted-foreground: oklch(0.505 0.025 272);
+  --accent: oklch(0.955 0.02 286);
+  --accent-foreground: oklch(0.34 0.075 282);
+
+  /* Semantic */
+  --destructive: oklch(0.585 0.231 27.3);
+  --destructive-foreground: oklch(0.985 0.01 20);
+  --success: oklch(0.62 0.16 152);
+  --success-foreground: oklch(0.985 0.01 150);
+  --warning: oklch(0.77 0.155 78);
+  --warning-foreground: oklch(0.3 0.06 70);
+  --info: oklch(0.62 0.16 236);
+  --info-foreground: oklch(0.985 0.01 235);
+
+  --border: oklch(0.912 0.01 274);
+  --input: oklch(0.912 0.01 274);
+  --ring: oklch(0.556 0.226 277);
+
+  /* Charts — indigo → violet → cyan → fuchsia → amber (distinct yet related) */
+  --chart-1: oklch(0.556 0.226 277);
+  --chart-2: oklch(0.606 0.211 300);
+  --chart-3: oklch(0.68 0.13 220);
+  --chart-4: oklch(0.66 0.2 350);
+  --chart-5: oklch(0.76 0.15 75);
+
+  /* Sidebar (kept brand-consistent even though the app uses a top nav) */
+  --sidebar: oklch(0.992 0.003 270);
+  --sidebar-foreground: oklch(0.215 0.03 274);
+  --sidebar-primary: oklch(0.556 0.226 277);
+  --sidebar-primary-foreground: oklch(0.985 0.012 280);
+  --sidebar-accent: oklch(0.955 0.02 286);
+  --sidebar-accent-foreground: oklch(0.34 0.075 282);
+  --sidebar-border: oklch(0.912 0.01 274);
+  --sidebar-ring: oklch(0.556 0.226 277);
+
+  /* Texture — faint dotted grid + soft brand glow (used by utilities below) */
+  --grid-dot: oklch(0.5 0.04 274 / 0.07);
+  --glow: oklch(0.6 0.2 282 / 0.16);
+  --glow-2: oklch(0.62 0.2 300 / 0.12);
+}
+
+/* ----------------------------------------------------------------------------
+   DARK THEME — hand-tuned (not inverted)
+   -------------------------------------------------------------------------- */
+.dark {
+  /* Deep indigo-slate canvas (≈ #12121C), soft off-white ink (≈ #E5E6EE).
+     Elevation comes from progressively lighter tinted surfaces, not shadows. */
+  --background: oklch(0.168 0.022 271);
+  --foreground: oklch(0.925 0.012 268);
+  --card: oklch(0.208 0.024 270);
+  --card-foreground: oklch(0.94 0.01 268);
+  --popover: oklch(0.208 0.024 270);
+  --popover-foreground: oklch(0.94 0.01 268);
+
+  /* Brand stays vivid but nudged brighter for legibility on the dark canvas;
+     white label on it still clears AA (~4.8:1). */
+  --primary: oklch(0.62 0.215 278);
+  --primary-foreground: oklch(0.99 0.01 280);
+  --brand: oklch(0.62 0.215 278);
+  --brand-foreground: oklch(0.99 0.01 280);
+  --brand-accent: oklch(0.68 0.2 300);
+
+  --secondary: oklch(0.258 0.026 270);
+  --secondary-foreground: oklch(0.93 0.012 268);
+  --muted: oklch(0.258 0.026 270);
+  --muted-foreground: oklch(0.715 0.028 270);
+  --accent: oklch(0.292 0.04 280);
+  --accent-foreground: oklch(0.94 0.015 280);
+
+  --destructive: oklch(0.704 0.191 22.2);
+  --destructive-foreground: oklch(0.985 0.01 20);
+  --success: oklch(0.7 0.16 153);
+  --success-foreground: oklch(0.18 0.04 150);
+  --warning: oklch(0.8 0.15 80);
+  --warning-foreground: oklch(0.24 0.05 70);
+  --info: oklch(0.7 0.15 236);
+  --info-foreground: oklch(0.18 0.04 235);
+
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.62 0.215 278);
+
+  --chart-1: oklch(0.65 0.2 278);
+  --chart-2: oklch(0.68 0.19 300);
+  --chart-3: oklch(0.72 0.12 220);
+  --chart-4: oklch(0.7 0.18 350);
+  --chart-5: oklch(0.8 0.14 75);
+
+  --sidebar: oklch(0.208 0.024 270);
+  --sidebar-foreground: oklch(0.94 0.01 268);
+  --sidebar-primary: oklch(0.62 0.215 278);
+  --sidebar-primary-foreground: oklch(0.99 0.01 280);
+  --sidebar-accent: oklch(0.292 0.04 280);
+  --sidebar-accent-foreground: oklch(0.94 0.015 280);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: oklch(0.62 0.215 278);
+
+  /* Texture toned down for dark to avoid noise / glare */
+  --grid-dot: oklch(0.8 0.05 282 / 0.05);
+  --glow: oklch(0.62 0.22 285 / 0.2);
+  --glow-2: oklch(0.66 0.2 300 / 0.14);
+}
+
+/* ----------------------------------------------------------------------------
+   Base layer
+   -------------------------------------------------------------------------- */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklch, var(--brand) 28%, transparent);
+    color: var(--foreground);
+  }
+
+  /* Consistent, brand-tinted custom scrollbars (progressive enhancement) */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--foreground) 22%, transparent)
+      transparent;
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   Reusable texture / brand utilities (consumed by hero + section backgrounds)
+   -------------------------------------------------------------------------- */
+@layer utilities {
+  /* Faint dotted grid — subtle "engineered" texture, never loud. */
+  .bg-grid {
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      var(--grid-dot) 1px,
+      transparent 0
+    );
+    background-size: 22px 22px;
+  }
+
+  /* Same grid but fading out toward the edges (great behind heroes). */
+  .bg-grid-fade {
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      var(--grid-dot) 1px,
+      transparent 0
+    );
+    background-size: 22px 22px;
+    -webkit-mask-image: radial-gradient(
+      ellipse 70% 60% at 50% 35%,
+      #000 55%,
+      transparent 100%
+    );
+    mask-image: radial-gradient(
+      ellipse 70% 60% at 50% 35%,
+      #000 55%,
+      transparent 100%
+    );
+  }
+
+  /* Soft dual-tone brand glow, e.g. behind a hero headline. */
+  .brand-glow {
+    background-image:
+      radial-gradient(60% 55% at 50% 0%, var(--glow) 0%, transparent 70%),
+      radial-gradient(45% 45% at 85% 20%, var(--glow-2) 0%, transparent 70%);
+  }
+
+  /* Gradient brand text for accent headings. */
+  .text-gradient-brand {
+    background-image: linear-gradient(
+      100deg,
+      var(--brand) 0%,
+      var(--brand-accent) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Subtle gradient surface for feature/stat panels. */
+  .surface-gradient {
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--brand) 6%, var(--card)) 0%,
+      var(--card) 60%
+    );
+  }
+
+  .animate-in-up {
+    animation: in-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in-up {
+    animation: none;
+  }
+}

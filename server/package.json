@@ -1,0 +1,19 @@
+{
+  "name": "url-shortener-backend",
+  "private": true,
+  "workspaces": [
+    "api",
+    "redirect",
+    "shared",
+    "worker"
+  ],
+  "scripts": {
+    "dev": "tsx api/src/server.ts && tsx redirect/src/server.ts && tsx worker/src/worker.ts"
+  },
+  "comments": {
+    "overrides": "Force a single ioredis copy across the tree. bullmq pins ioredis to exact 5.10.1 while api/redirect use ^5.11.1; without this, two copies are installed and their types are nominally incompatible (BullMQ ConnectionOptions). 5.11.1 is API-compatible for bullmq."
+  },
+  "overrides": {
+    "ioredis": "5.11.1"
+  }
+}

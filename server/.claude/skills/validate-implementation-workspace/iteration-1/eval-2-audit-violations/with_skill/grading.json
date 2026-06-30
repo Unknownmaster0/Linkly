@@ -1,0 +1,12 @@
+﻿{
+  "eval_id": 2,
+  "run_type": "with_skill",
+  "expectations": [
+    {"text": "Report explicitly distinguishes VIOLATIONS (wrong implementation) from MISSING (not yet built)", "passed": true, "evidence": "V-numbered violations listed separately from explicit Not Yet Implemented section"},
+    {"text": "Report catches the success response wrapper violation: POST /api/shorten wraps data in { success, message, data } but API_CONTRACT.md shows bare JSON response", "passed": true, "evidence": "V2 explicitly calls out routes/url.ts:154 + api-response.ts:6-10"},
+    {"text": "Report catches the error envelope violation: api-response.ts adds a 'success' field that is not in the error contract", "passed": true, "evidence": "V7 cites utils/api-response.ts:16 as the root cause"},
+    {"text": "Report catches the global error handler shape violation: app.ts sends { success: false, error } instead of { error }", "passed": true, "evidence": "V9 lists all 9 send() call sites in app.ts"},
+    {"text": "Report catches the health route try-catch violation", "passed": true, "evidence": "V10 cites routes/health.ts:7-13"},
+    {"text": "Report uses specific file:line citations for each violation", "passed": true, "evidence": "Every violation has precise file:line citations"}
+  ]
+}

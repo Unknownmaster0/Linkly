@@ -1,0 +1,1235 @@
+﻿{
+  "info": {
+    "_postman_id": "d4a7e2f1-3b8c-4e9d-a056-12345678abcd",
+    "name": "URL Shortener — Days 1-4",
+    "description": "Complete API test suite for Days 1-4: Health, Auth (register/login/refresh/logout), URL Shortening, and Redirect. Import this file into Postman, then click Run Collection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url",       "value": "http://localhost:3000", "type": "string" },
+    { "key": "access_token",   "value": "",                      "type": "string" },
+    { "key": "short_code",     "value": "",                      "type": "string" },
+    { "key": "test_email",     "value": "",                      "type": "string" },
+    { "key": "test_password",  "value": "Password123",           "type": "string" }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (pm.response.code >= 400) {",
+          "    pm.test('[envelope] error is a string', function () {",
+          "        var b = pm.response.json();",
+          "        pm.expect(b.error).to.be.a('string');",
+          "        pm.expect(b.success).to.be.undefined;",
+          "    });",
+          "    if (pm.response.code === 429) {",
+          "        pm.test('[envelope] 429 includes retryAfter number', function () {",
+          "            pm.expect(pm.response.json().retryAfter).to.be.a('number');",
+          "        });",
+          "    }",
+          "    if (pm.response.code === 400) {",
+          "        pm.test('[envelope] 400 details is object if present', function () {",
+          "            var b = pm.response.json();",
+          "            if (b.details !== undefined) { pm.expect(b.details).to.be.an('object'); }",
+          "        });",
+          "    }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health",
+      "item": [
+        {
+          "name": "✅ GET /health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Body: status ok, db ok, timestamp present', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('ok');",
+                  "    pm.expect(b.db).to.eql('ok');",
+                  "    pm.expect(b.timestamp).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Auth",
+      "item": [
+        {
+          "name": "Register",
+          "item": [
+            {
+              "name": "✅ Register — Happy Path",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set('test_email', 'user_' + Date.now() + '@example.com');"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                      "pm.test('Returns accessToken and user object', function () {",
+                      "    var b = pm.response.json();",
+                      "    pm.expect(b.accessToken).to.be.a('string');",
+                      "    pm.expect(b.user).to.be.an('object');",
+                      "    pm.expect(b.user.email).to.eql(pm.collectionVariables.get('test_email'));",
+                      "    pm.collectionVariables.set('access_token', b.accessToken);",
+                      "});",
+                      "pm.test('Sets refreshToken cookie (httpOnly)', function () {",
+                      "    pm.expect(pm.cookies.has('refreshToken')).to.be.true;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\",\n  \"name\": \"Test User\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/register",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "register"]
+                }
+              }
+            },
+            {
+              "name": "❌ Register — Missing Email (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/register",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "register"]
+                }
+              }
+            },
+            {
+              "name": "❌ Register — Invalid Email Format (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"not-an-email\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/register",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "register"]
+                }
+              }
+            },
+            {
+              "name": "❌ Register — Password Too Short (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"abc1\",\n  \"confirmPassword\": \"abc1\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/register",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "register"]
+                }
+              }
+            },
+            {
+              "name": "❌ Register — Password Has No Number (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"PasswordOnly\",\n  \"confirmPassword\": \"PasswordOnly\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/register",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "register"]
+                }
+              }
+            },
+            {
+              "name": "❌ Register — Passwords Don't Match (400)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"Different999\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/register",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "register"]
+                }
+              }
+            },
+            {
+              "name": "❌ Register — Duplicate Email (409)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 409 Conflict', function () { pm.response.to.have.status(409); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\",\n  \"confirmPassword\": \"{{test_password}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/register",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "register"]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "item": [
+            {
+              "name": "✅ Login — Valid Credentials",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Returns accessToken', function () {",
+                      "    var b = pm.response.json();",
+                      "    pm.expect(b.accessToken).to.be.a('string');",
+                      "    pm.collectionVariables.set('access_token', b.accessToken);",
+                      "});",
+                      "pm.test('Sets refreshToken cookie', function () {",
+                      "    pm.expect(pm.cookies.has('refreshToken')).to.be.true;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/login",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "login"]
+                }
+              }
+            },
+            {
+              "name": "❌ Login — Wrong Password (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('Error message is generic (no user enumeration)', function () {",
+                      "    var b = pm.response.json();",
+                      "    pm.expect(b.error).to.be.a('string');",
+                      "    pm.expect(b.error.toLowerCase()).to.not.include('password');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"WrongPass999\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/login",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "login"]
+                }
+              }
+            },
+            {
+              "name": "❌ Login — Unknown Email (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', function () { pm.response.to.have.status(401); });",
+                      "pm.test('Same error message as wrong password (no enumeration)', function () {",
+                      "    pm.expect(pm.response.json().error).to.be.a('string');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"nobody@example.com\",\n  \"password\": \"{{test_password}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/login",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "login"]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh",
+          "item": [
+            {
+              "name": "✅ Refresh — Valid Cookie",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                      "pm.test('Issues new accessToken', function () {",
+                      "    var b = pm.response.json();",
+                      "    pm.expect(b.accessToken).to.be.a('string');",
+                      "    pm.collectionVariables.set('access_token', b.accessToken);",
+                      "});",
+                      "pm.test('Rotates refreshToken cookie', function () {",
+                      "    pm.expect(pm.cookies.has('refreshToken')).to.be.true;",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/refresh",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "refresh"]
+                }
+              }
+            },
+            {
+              "name": "❌ Refresh — No Cookie [Manual: clear refreshToken cookie first] (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', function () { pm.response.to.have.status(401); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/refresh",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "refresh"]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "item": [
+            {
+              "name": "✅ Logout — Authenticated",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 204 No Content', function () { pm.response.to.have.status(204); });",
+                      "pm.test('Set-Cookie clears refreshToken (Max-Age=0)', function () {",
+                      "    var setCookie = pm.response.headers.get('Set-Cookie') || '';",
+                      "    pm.expect(setCookie).to.include('Max-Age=0');",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type",  "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{access_token}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/logout",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "logout"]
+                }
+              }
+            },
+            {
+              "name": "❌ Logout — No Bearer Token (401)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 401', function () { pm.response.to.have.status(401); });"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type",  "value": "application/json" },
+                  { "key": "Authorization", "value": "Bearer {{access_token}}", "disabled": true }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/logout",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "logout"]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Shorten",
+      "item": [
+        {
+          "name": "✅ Shorten — Basic",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var token = pm.collectionVariables.get('access_token');",
+                  "if (!token) { console.warn('access_token is empty — run Login first'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Response shape: success, message, data', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.success).to.be.true;",
+                  "    pm.expect(b.message).to.be.a('string');",
+                  "    pm.expect(b.data).to.be.an('object');",
+                  "    pm.expect(b.data.shortCode).to.be.a('string');",
+                  "    pm.expect(b.data.shortUrl).to.include(b.data.shortCode);",
+                  "    pm.expect(b.data.originalUrl).to.be.a('string');",
+                  "    pm.collectionVariables.set('short_code', b.data.shortCode);",
+                  "});",
+                  "pm.test('Rate limit headers present', function () {",
+                  "    pm.expect(pm.response.headers.get('X-RateLimit-Limit')).to.exist;",
+                  "    pm.expect(pm.response.headers.get('X-RateLimit-Remaining')).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://www.google.com/search?q=postman+api+testing+guide\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "✅ Shorten — Custom Alias",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('customAlias matches requested alias', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.data.customAlias).to.eql('gh-test');",
+                  "    pm.expect(b.data.shortCode).to.eql('gh-test');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://github.com\",\n  \"customAlias\": \"gh-test\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "✅ Shorten — With ttlDays",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('expiresAt is ~30 days from now', function () {",
+                  "    var expiresAt = new Date(pm.response.json().data.expiresAt);",
+                  "    var now = new Date();",
+                  "    var diffDays = (expiresAt - now) / (1000 * 60 * 60 * 24);",
+                  "    pm.expect(diffDays).to.be.above(29);",
+                  "    pm.expect(diffDays).to.be.below(31);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/ttl-test\",\n  \"ttlDays\": 30\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "✅ Shorten — All Fields Together",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('All fields present in data', function () {",
+                  "    var d = pm.response.json().data;",
+                  "    pm.expect(d.shortCode).to.eql('full-test');",
+                  "    pm.expect(d.customAlias).to.eql('full-test');",
+                  "    pm.expect(d.expiresAt).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/all-fields\",\n  \"customAlias\": \"full-test\",\n  \"ttlDays\": 7\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — No Auth (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — Missing URL (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — Non-HTTP Scheme ftp:// (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"ftp://example.com/file.zip\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — SSRF Private IP 192.168.x.x (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400 — SSRF guard rejects private IP', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"http://192.168.1.1/admin\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — SSRF Localhost (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400 — SSRF guard rejects localhost', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"http://localhost/secret\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — Reserved Alias: api (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com\",\n  \"customAlias\": \"api\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — Reserved Alias: admin (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com\",\n  \"customAlias\": \"admin\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — Alias Too Short < 3 chars (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com\",\n  \"customAlias\": \"ab\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — Alias With Space (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com\",\n  \"customAlias\": \"my alias\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — ttlDays = 0 (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com\",\n  \"ttlDays\": 0\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — ttlDays = 366 (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com\",\n  \"ttlDays\": 366\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        },
+        {
+          "name": "❌ Shorten — Duplicate Custom Alias (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://different-site.com\",\n  \"customAlias\": \"gh-test\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/urls",
+              "host": ["{{base_url}}"],
+              "path": ["api", "urls"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Redirect (Day 4)",
+      "description": "IMPORTANT: Set Postman → Settings → 'Automatically follow redirects: OFF' before running these tests, or the 302 will be hidden.",
+      "item": [
+        {
+          "name": "✅ Redirect — Auto Short Code → 302",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 302 Found', function () { pm.response.to.have.status(302); });",
+                  "pm.test('Location header is a URL', function () {",
+                  "    var loc = pm.response.headers.get('Location');",
+                  "    pm.expect(loc).to.be.a('string');",
+                  "    pm.expect(loc).to.include('://');",
+                  "});",
+                  "pm.test('No long-lived cache (not 301 behavior)', function () {",
+                  "    var cc = pm.response.headers.get('Cache-Control') || '';",
+                  "    pm.expect(cc).to.not.include('max-age=31536000');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/{{short_code}}",
+              "host": ["{{base_url}}"],
+              "path": ["{{short_code}}"]
+            }
+          }
+        },
+        {
+          "name": "✅ Redirect — Custom Alias gh-test → github.com",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 302 Found', function () { pm.response.to.have.status(302); });",
+                  "pm.test('Location points to github.com', function () {",
+                  "    var loc = pm.response.headers.get('Location');",
+                  "    pm.expect(loc).to.include('github.com');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/gh-test",
+              "host": ["{{base_url}}"],
+              "path": ["gh-test"]
+            }
+          }
+        },
+        {
+          "name": "❌ Redirect — Non-Existent Code (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/zzzzzzzzz",
+              "host": ["{{base_url}}"],
+              "path": ["zzzzzzzzz"]
+            }
+          }
+        },
+        {
+          "name": "❌ Redirect — Expired URL [Manual: set expires_at past in Prisma Studio] (410)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 410 Gone (expired URL)', function () { pm.response.to.have.status(410); });"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/{{short_code}}",
+              "host": ["{{base_url}}"],
+              "path": ["{{short_code}}"]
+            }
+          }
+        },
+        {
+          "name": "❌ Redirect — Deleted URL [Manual: set is_deleted=true in Prisma Studio] (410)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 410 Gone (soft-deleted URL)', function () { pm.response.to.have.status(410); });"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/{{short_code}}",
+              "host": ["{{base_url}}"],
+              "path": ["{{short_code}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

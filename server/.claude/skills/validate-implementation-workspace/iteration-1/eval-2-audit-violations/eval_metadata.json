@@ -1,0 +1,37 @@
+{
+  "eval_id": 2,
+  "eval_name": "audit-violations-only",
+  "prompt": "audit my implementation against the API contract docs - I want to know exactly what's implemented wrong, not just what's missing",
+  "assertions": [
+    {
+      "text": "Report explicitly distinguishes VIOLATIONS (wrong implementation) from MISSING (not yet built)",
+      "passed": false,
+      "evidence": ""
+    },
+    {
+      "text": "Report catches the success response wrapper violation: POST /api/shorten wraps data in { success, message, data } but API_CONTRACT.md shows bare JSON response",
+      "passed": false,
+      "evidence": ""
+    },
+    {
+      "text": "Report catches the error envelope violation: api-response.ts adds a success field that is not in the error contract",
+      "passed": false,
+      "evidence": ""
+    },
+    {
+      "text": "Report catches the global error handler shape violation: app.ts sends { success: false, error } instead of { error }",
+      "passed": false,
+      "evidence": ""
+    },
+    {
+      "text": "Report catches the health route try-catch violation",
+      "passed": false,
+      "evidence": ""
+    },
+    {
+      "text": "Report uses specific file:line citations for each violation",
+      "passed": false,
+      "evidence": ""
+    }
+  ]
+}
