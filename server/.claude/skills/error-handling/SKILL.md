@@ -216,7 +216,7 @@ Use exceptions only when caller reasonably expects record to exist:
 ## Implementation Checklist
 
 Before considering error handling complete:
-- [ ] Global error handler registered once in app.js (not per-route)
+- [ ] Global error handler registered once in app.ts (not per-route)
 - [ ] Route handlers contain ZERO try-catch for business/database logic
 - [ ] Custom error hierarchy implemented with proper status codes
 - [ ] OwnershipError always returns 404, never 403
@@ -232,15 +232,15 @@ Before considering error handling complete:
 
 ## Files to Modify
 
-When implementing error handling, you'll typically work with:
-- `src/app.js` - Global error handler registration
-- `src/shared/errors/` - Custom error classes (AppError subclasses)
-- `src/api/middleware/` - Auth middleware, validation middleware
-- `src/api/controllers/` - Route handlers (thin, no try-catch)
-- `src/shared/services/` - Business logic (throws custom errors only)
-- `src/jobs/` - BullMQ processors with worker-specific error handling
-- `src/config/` - Error handler configuration (retry times, etc.)
-- `src/shared/utils/logger.js` - Centralized logging if used
+When implementing error handling, you'll typically work with (paths relative to `server/`):
+- `api/src/app.ts` (and `redirect/src/app.ts`) — global `setErrorHandler` registration
+- `api/src/utils/errors.ts` (and `redirect/src/utils/errors.ts`) — custom error classes (AppError subclasses)
+- `api/src/middleware/` — `auth.ts` (pre-condition check), `rateLimit.ts`
+- `api/src/routes/` — thin route handlers (no try-catch for business/DB logic)
+- `api/src/services/` — business logic (`*.service.ts`, throws typed custom errors only)
+- `worker/src/jobs/` — BullMQ processors with worker-specific error handling (P2003 discard, geo fallback)
+- `api/src/config.ts` + `shared/src/config.ts` — error handler configuration (retry times, etc.)
+- `shared/src/logger.ts` (and `worker/src/logger.ts`) — centralized logging
 
 ## Validation Rules from API Contract
 

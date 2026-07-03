@@ -206,43 +206,42 @@ Implement these middleware protections:
 
 ## Files to Review for Security
 
-When conducting a security review, focus on these areas:
+When conducting a security review, focus on these areas (paths relative to `server/`):
 
 ### Authentication Files
-- `src/api/routes/auth/` - Auth endpoint implementations
-- `src/api/middleware/authenticate.js` - JWT validation middleware
-- `src/shared/services/authService.js` - Auth business logic
-- `src/shared/errors/` - Custom error classes (AuthError, etc.)
-- `src/config/jwt.js` - JWT configuration
+- `api/src/routes/auth.ts` - Auth endpoint implementations (register, login, refresh, logout)
+- `api/src/middleware/auth.ts` - JWT validation preHandler
+- `api/src/services/auth.service.ts` - Auth business logic + Argon2 password hashing
+- `api/src/repositories/auth.repository.ts` - User / refresh-token DB access
+- `api/src/utils/errors.ts` - Custom error classes (AuthError, etc.)
+- `api/src/config.ts` + `shared/src/config.ts` - JWT secrets & expiry configuration
 
 ### URL Management Files
-- `src/api/routes/urls/` - URL CRUD endpoints
-- `src/api/middleware/ownership.js` - Ownership verification middleware
-- `src/shared/services/urlService.js` - URL business logic
-- `src/shared/utils/validation.js` - Input validation utilities
+- `api/src/routes/url.ts` - URL CRUD endpoints
+- `api/src/services/url.service.ts` - URL business logic; ownership enforced via scoped queries (shortCode + userId)
+- `api/src/repositories/url.repository.ts` - Prisma access; soft-delete + scoped ownership lookups
+- `api/src/schemas/url.schema.ts` - Input validation (URL, custom alias, TTL)
 
 ### Redirect & Analytics Files
-- `src/redirect/` - Redirect server implementation
-- `src/jobs/clickProcessor.js` - BullMQ worker for click events
-- `src/api/routes/analytics/` - Analytics endpoints
-- `src/shared/services/analyticsService.js` - Analytics business logic
+- `redirect/src/routes/redirect.ts` - Public redirect (302, cache-aside lookup, fire-and-forget click enqueue)
+- `redirect/src/plugins/cache.ts` - Valkey cache-aside (fail-open)
+- `worker/src/jobs/analytics.job.ts` - BullMQ click processor (IP SHA-256 hashing, geo fallback)
+- `api/src/routes/analytics.ts` + `api/src/services/analytics.service.ts` - Analytics endpoints & business logic
 
 ### Middleware & Utilities
-- `src/api/middleware/validation.js` - Request validation middleware
-- `src/api/middleware/rateLimit.js` - Rate limiting implementation
-- `src/api/middleware/securityHeaders.js` - Security headers middleware
-- `src/shared/utils/logger.js` - Logging implementation
-- `src/shared/utils/crypto.js` - Hashing/encryption utilities
+- `api/src/schemas/*.schema.ts` - Fastify JSON Schema request validation
+- `api/src/middleware/rateLimit.ts` + `redirect/src/middleware/rateLimit.ts` + `shared/src/rateLimitCheck.ts` - Rate limiting
+- `api/src/plugins/security.ts` + `redirect/src/plugins/security.ts` - helmet / CORS security headers
+- `shared/src/logger.ts` + `worker/src/logger.ts` - Logging (raw-IP-free serializer, secret redaction)
 
 ### Configuration Files
-- `src/config/` - Environment-specific configurations
-- `.env.example` - Required environment variables
-- `prisma/schema.prisma` - Database schema (check for security-relevant fields)
+- `api/src/config.ts`, `redirect/src/config.ts`, `worker/src/config.ts`, `shared/src/config.ts` - Environment-driven configuration
+- `api/.env`, `redirect/.env`, `worker/.env` - Secrets (verify these are gitignored, never committed)
+- `api/prisma/schema.prisma` - Database schema (check for security-relevant fields)
 
 ### Error Handling
-- `src/app.js` - Global error handler registration
-- `src/shared/errors/globalErrorHandler.js` - Centralized error handling
-- `src/shared/errors/customErrors.js` - Custom error class definitions
+- `api/src/app.ts` + `redirect/src/app.ts` - Global `setErrorHandler` registration
+- `api/src/utils/errors.ts` + `redirect/src/utils/errors.ts` - Custom error class definitions (AppError hierarchy)
 
 ## Security Testing Guidelines
 

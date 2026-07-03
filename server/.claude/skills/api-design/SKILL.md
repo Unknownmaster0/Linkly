@@ -101,13 +101,15 @@ Follow `../docs/notes/ERROR_CONTRACT.md` strictly:
 
 ## Files to Modify
 
-When implementing API endpoints, you'll typically work with:
-- `src/api/routes/` - Route definitions
-- `src/api/controllers/` - Business logic handlers
-- `src/api/middleware/` - Auth, validation, rate limiting middleware
-- `src/shared/utils/` - Helper functions (validation, token handling)
-- `src/config/` - Configuration (rate limits, JWT secrets)
-- `src/jobs/` - BullMQ processors for async tasks (click tracking)
+When implementing API endpoints, you'll typically work with (paths relative to `server/`):
+- `api/src/routes/` — thin route handlers, zero try-catch (`auth.ts`, `url.ts`, `analytics.ts`, `health.ts`)
+- `api/src/services/` — business logic (`*.service.ts`); routes call these, never Prisma directly
+- `api/src/repositories/` — all Prisma/DB access (`*.repository.ts`)
+- `api/src/schemas/` — Fastify JSON Schema request/response validation (`*.schema.ts`)
+- `api/src/middleware/` — `auth.ts` (JWT preHandler), `rateLimit.ts`
+- `api/src/utils/` — helpers (`base62.ts`, `api-response.ts`, `errors.ts`)
+- `api/src/config.ts` + `shared/src/config.ts` — configuration (rate limits, JWT secrets)
+- `worker/src/jobs/` — BullMQ processors for async tasks (click/analytics tracking)
 
 ## Validation Rules to Implement
 
