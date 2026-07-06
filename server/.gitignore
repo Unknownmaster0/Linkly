@@ -1,1 +1,10 @@
 node_modules
+dist/
+.env
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+.DS_Store
+.github
+.claude
+CLAUDE.md

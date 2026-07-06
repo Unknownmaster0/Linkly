@@ -8,7 +8,13 @@
     "worker"
   ],
   "scripts": {
-    "dev": "tsx api/src/server.ts && tsx redirect/src/server.ts && tsx worker/src/worker.ts"
+    "build:api": "npm run build -w api",
+    "build:redirect": "npm run build -w redirect",
+    "build:shared": "npm run build -w shared",
+    "build:worker": "npm run build -w worker",
+    "dev:api": "npm run dev -w api",
+    "dev:redirect": "npm run dev -w redirect",
+    "dev:worker": "npm run dev -w worker"
   },
   "comments": {
     "overrides": "Force a single ioredis copy across the tree. bullmq pins ioredis to exact 5.10.1 while api/redirect use ^5.11.1; without this, two copies are installed and their types are nominally incompatible (BullMQ ConnectionOptions). 5.11.1 is API-compatible for bullmq."
