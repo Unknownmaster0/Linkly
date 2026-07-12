@@ -1,4 +1,4 @@
-# Linkly — URL Shortener
+# Linkly — Shorten your URL in seconds and keep records
 
 High-throughput URL shortening system with first-class click analytics. Built for low-latency redirects (sub-10ms p99) and horizontal scalability. Separates URL creation from redirect serving to allow independent scaling of read-heavy workloads.
 
