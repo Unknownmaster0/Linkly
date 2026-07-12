@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import { UAParser } from 'ua-parser-js';
 import type { Job } from 'bullmq';
 import type { ClickJob } from '@url-shortener/shared';
-import type { DeviceType } from '../generated/prisma/client';
-import type { ClickEventRepository } from '../repositories/click-event.repository';
-import { config } from '../config';
-import { logger } from '../logger';
+import type { DeviceType } from '../generated/prisma/enums.js';
+import type { ClickEventRepository } from '../repositories/click-event.repository.js';
+import { config } from '../config.js';
+import { logger } from '../logger.js';
 
 type Geo = { countryCode: string | null; city: string | null };
 type Ua = { deviceType: DeviceType; browser: string | null; os: string | null };
