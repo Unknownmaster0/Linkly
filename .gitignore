@@ -5,9 +5,10 @@ node_modules/
 plan/
 docs/
 
-.claude
-.agent
-./*/.claude
+.claude/
+**/.claude/
+.agents/
+**/.agents/
 
 *.tsbuildinfo
 npm-debug.log*
@@ -15,5 +16,6 @@ yarn-debug.log*
 .DS_Store
 
 CLAUDE.md
+**/CLAUDE.md
 AGENTS.md
-./*/CLAUDE.md
+**/AGENTS.md
