@@ -1,16 +1,16 @@
 import Fastify from 'fastify';
-import { config } from './config';
-import { healthCheckRoutes } from './routes/health';
-import { urlRoutes } from './routes/url';
-import { authRoutes } from './routes/auth';
-import { analyticsRoutes } from './routes/analytics';
-import PrismaPlugin from './db/index';
-import CachePlugin from './plugins/cache';
-import SecurityPlugin from './plugins/security';
-import SwaggerPlugin from './plugins/swagger';
-import { Prisma } from './generated/prisma/client';
-import { AppError, RateLimitError } from './utils/errors';
-import { errorResponse, rateLimitResponse } from './utils/api-response';
+import { config } from './config.js';
+import { healthCheckRoutes } from './routes/health.js';
+import { urlRoutes } from './routes/url.js';
+import { authRoutes } from './routes/auth.js';
+import { analyticsRoutes } from './routes/analytics.js';
+import PrismaPlugin from './db/index.js';
+import CachePlugin from './plugins/cache.js';
+import SecurityPlugin from './plugins/security.js';
+import SwaggerPlugin from './plugins/swagger.js';
+import { Prisma } from './generated/prisma/client.js';
+import { AppError, RateLimitError } from './utils/errors.js';
+import { errorResponse, rateLimitResponse } from './utils/api-response.js';
 import {
   getFastifyLoggerConfig,
   genReqId,
@@ -52,10 +52,9 @@ export async function createApp() {
   // Single place that maps every thrown error to the ERROR_CONTRACT envelope:
   //   { error: string, details?: object, retryAfter?: number }
   // Route handlers must contain zero try-catch for business/DB logic.
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: unknown, request, reply) => {
     // Layer 4 — custom AppError subclasses (service layer + middleware throw these)
     if (error instanceof AppError) {
-      // Every 401 carries the auth challenge header (ERROR_CONTRACT.md §401).
       if (error.status === 401) {
         reply.header('WWW-Authenticate', 'Bearer realm="url-shortener"');
       }
@@ -68,7 +67,7 @@ export async function createApp() {
 
     // Layer 5 — Prisma known request errors
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      const code = error.code;
+      const code = (error as Prisma.PrismaClientKnownRequestError).code;
 
       if (code === 'P1001' || code === 'P1017') {
         reply.header('Retry-After', '30');

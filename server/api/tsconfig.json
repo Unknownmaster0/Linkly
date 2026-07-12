@@ -3,7 +3,7 @@
     /* Language and Environment */
     "target": "ES2020",
     "lib": ["ES2020"],
-    "module": "ES2020",
+    "module": "NodeNext",
 
     /* Emit */
     "declaration": true,
@@ -13,7 +13,7 @@
     "rootDir": "./src",
 
     /* Module Resolution */
-    "moduleResolution": "bundler",
+    "moduleResolution": "NodeNext",
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": true,

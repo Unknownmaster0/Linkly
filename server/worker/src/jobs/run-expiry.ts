@@ -8,10 +8,10 @@
  * exits. Lets you confirm the job flips is_deleted on expired rows on demand,
  * without waiting for 01:00.
  */
-import { prisma, disconnect } from '../db';
-import { logger } from '../logger';
-import { createUrlRepository } from '../repositories/url.repository';
-import { createExpiryJob } from './expiry.job';
+import { prisma, disconnect } from '../db.js';
+import { logger } from '../logger.js';
+import { createUrlRepository } from '../repositories/url.repository.js';
+import { createExpiryJob } from './expiry.job.js';
 
 async function main(): Promise<void> {
   const asOf = process.argv[2]; // optional ISO instant

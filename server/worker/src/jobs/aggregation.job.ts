@@ -1,5 +1,5 @@
-import type { AggregateRepository } from '../repositories/aggregate.repository';
-import { logger } from '../logger';
+import type { AggregateRepository } from '../repositories/aggregate.repository.js';
+import { logger } from '../logger.js';
 
 const DAY_MS = 86_400_000;
 /** IST is a fixed +05:30 offset (no DST), so a constant shift is exact. */

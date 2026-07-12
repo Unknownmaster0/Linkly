@@ -1,13 +1,13 @@
 import Fastify from 'fastify';
-import { config } from './config';
-import { redirectRoutes } from './routes/redirect';
-import PrismaPlugin from './db/index';
-import CachePlugin from './plugins/cache';
-import QueuePlugin from './plugins/queue';
-import SecurityPlugin from './plugins/security';
-import SwaggerPlugin from './plugins/swagger';
-import { Prisma } from './generated/prisma/client';
-import { AppError, RateLimitError } from './utils/errors';
+import { config } from './config.js';
+import { redirectRoutes } from './routes/redirect.js';
+import PrismaPlugin from './db/index.js';
+import CachePlugin from './plugins/cache.js';
+import QueuePlugin from './plugins/queue.js';
+import SecurityPlugin from './plugins/security.js';
+import SwaggerPlugin from './plugins/swagger.js';
+import { Prisma } from './generated/prisma/client.js';
+import { AppError, RateLimitError } from './utils/errors.js';
 import {
   getFastifyLoggerConfig,
   genReqId,
@@ -46,7 +46,7 @@ export async function createApp() {
   // ── Global error handler ────────────────────────────────────────────────────
   // Maps thrown errors to { error: string } envelope per ERROR_CONTRACT.md.
   // Route handlers contain zero try-catch — all errors bubble here.
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: unknown, request, reply) => {
     // RateLimitError must be checked before the generic AppError branch so the
     // Retry-After header and retryAfter body field are included in the 429 response.
     if (error instanceof RateLimitError) {
@@ -67,7 +67,7 @@ export async function createApp() {
     }
 
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      const code = error.code;
+      const code = (error as Prisma.PrismaClientKnownRequestError).code;
       if (code === 'P1001' || code === 'P1017') {
         reply.header('Retry-After', '30');
         return reply.status(503).send({ error: 'Service temporarily unavailable' });

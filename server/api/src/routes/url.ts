@@ -1,20 +1,20 @@
-import type { FastifyInstance } from 'fastify';
-import { successResponse } from '../utils/api-response';
-import { config } from '../config';
-import { createUrlService } from '../services/url.service';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { successResponse } from '../utils/api-response.js';
+import { config } from '../config.js';
+import { createUrlService } from '../services/url.service.js';
 import {
   shortenBodySchema,
   type ShortenBodyInput,
-} from '../schemas/url.schema';
-import { authenticate } from '../middleware/auth';
-import { makeRateLimiter } from '../middleware/rateLimit';
-import { ValidationError } from '../utils/errors';
+} from '../schemas/url.schema.js';
+import { authenticate } from '../middleware/auth.js';
+import { makeRateLimiter } from '../middleware/rateLimit.js';
+import { ValidationError } from '../utils/errors.js';
 import {
   zodToJsonSchema,
   successEnvelope,
   errorEnvelope,
   noContentResponse,
-} from '../utils/openapi';
+} from '../utils/openapi.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OpenAPI schema (docs only — see plugins/swagger.ts; Zod stays the validator)
@@ -114,7 +114,7 @@ const deleteUrlSchema = {
 
 // Per-user limit: 10 creates / 60 s (runs after authenticate sets request.userId).
 const shortenRateLimit = makeRateLimiter({
-  key: (request) => `rl:create:${request.userId}`,
+  key: (request: FastifyRequest) => `rl:create:${request.userId}`,
   limit: config.RATE_LIMIT_CREATE_LIMIT,
   windowSecs: config.RATE_LIMIT_WINDOW_SECS,
 });

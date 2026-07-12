@@ -12,10 +12,10 @@
  * UTC-midnight of D+1 (below) lands on 05:30 IST of D+1, whose IST-yesterday is
  * exactly the target IST day D — so the same +1-day math works for IST buckets.
  */
-import { prisma, disconnect } from '../db';
-import { logger } from '../logger';
-import { createAggregateRepository } from '../repositories/aggregate.repository';
-import { createAggregationJob } from './aggregation.job';
+import { prisma, disconnect } from '../db.js';
+import { logger } from '../logger.js';
+import { createAggregateRepository } from '../repositories/aggregate.repository.js';
+import { createAggregationJob } from './aggregation.job.js';
 
 const DAY_MS = 86_400_000;
 

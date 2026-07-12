@@ -1,14 +1,14 @@
 import type { FastifyInstance } from 'fastify';
-import { successResponse } from '../utils/api-response';
-import { createAnalyticsService } from '../services/analytics.service';
-import { eventsQuerySchema, type EventsQueryInput } from '../schemas/analytics.schema';
-import { authenticate } from '../middleware/auth';
-import { ValidationError } from '../utils/errors';
+import { successResponse } from '../utils/api-response.js';
+import { createAnalyticsService } from '../services/analytics.service.js';
+import { eventsQuerySchema, type EventsQueryInput } from '../schemas/analytics.schema.js';
+import { authenticate } from '../middleware/auth.js';
+import { ValidationError } from '../utils/errors.js';
 import {
   zodToJsonSchema,
   successEnvelope,
   errorEnvelope,
-} from '../utils/openapi';
+} from '../utils/openapi.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OpenAPI schemas (docs only — see plugins/swagger.ts; Zod stays the validator)

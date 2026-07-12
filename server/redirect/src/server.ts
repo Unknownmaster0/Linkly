@@ -1,5 +1,5 @@
-import { createApp } from './app';
-import { config } from './config';
+import { createApp } from './app.js';
+import { config } from './config.js';
 import { registerGracefulShutdown } from '@url-shortener/shared';
 
 async function start() {

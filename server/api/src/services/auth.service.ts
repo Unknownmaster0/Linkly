@@ -1,10 +1,10 @@
 import argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
 import { createHash, randomBytes } from 'crypto';
-import { config } from '../config';
-import { AuthError, ConflictError } from '../utils/errors';
-import { createAuthRepository } from '../repositories/auth.repository';
-import type { PrismaClient } from '../generated/prisma/client';
+import { config } from '../config.js';
+import { AuthError, ConflictError } from '../utils/errors.js';
+import { createAuthRepository } from '../repositories/auth.repository.js';
+import type { PrismaClient } from '../generated/prisma/client.js';
 
 interface AuthResult {
   user: { id: string; email: string };

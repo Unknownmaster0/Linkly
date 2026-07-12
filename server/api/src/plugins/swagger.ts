@@ -2,7 +2,7 @@ import fp from 'fastify-plugin';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import type { FastifyInstance } from 'fastify';
-import { config } from '../config';
+import { config } from '../config.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Swagger / OpenAPI plugin (api server)

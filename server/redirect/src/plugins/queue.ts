@@ -4,7 +4,7 @@ import { Queue } from 'bullmq';
 import type { FastifyInstance } from 'fastify';
 import { CLICK_QUEUE } from '@url-shortener/shared';
 import type { ClickJob } from '@url-shortener/shared';
-import { config } from '../config';
+import { config } from '../config.js';
 
 type QueueClient = {
   /**

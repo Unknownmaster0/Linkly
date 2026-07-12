@@ -1,16 +1,16 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { authenticate } from '../middleware/auth';
-import { createAuthService } from '../services/auth.service';
-import { registerBodySchema, loginBodySchema } from '../schemas/auth.schema';
-import { successResponse } from '../utils/api-response';
-import { config } from '../config';
-import { AuthError, ValidationError } from '../utils/errors';
+import { authenticate } from '../middleware/auth.js';
+import { createAuthService } from '../services/auth.service.js';
+import { registerBodySchema, loginBodySchema } from '../schemas/auth.schema.js';
+import { successResponse } from '../utils/api-response.js';
+import { config } from '../config.js';
+import { AuthError, ValidationError } from '../utils/errors.js';
 import {
   zodToJsonSchema,
   successEnvelope,
   errorEnvelope,
   noContentResponse,
-} from '../utils/openapi';
+} from '../utils/openapi.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OpenAPI schemas (docs only — see plugins/swagger.ts; Zod stays the validator)

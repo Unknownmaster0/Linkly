@@ -1,11 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { createUrlRepository } from '../repositories/url.repository';
-import { NotFoundError, GoneError, LegalError } from '../utils/errors';
-import type { CachedUrl } from '../plugins/cache';
-import { makeRateLimiter } from '../middleware/rateLimit';
-import { config } from '../config';
+import { createUrlRepository } from '../repositories/url.repository.js';
+import { NotFoundError, GoneError, LegalError } from '../utils/errors.js';
+import type { CachedUrl } from '../plugins/cache.js';
+import { makeRateLimiter } from '../middleware/rateLimit.js';
+import { config } from '../config.js';
 import type { ClickJob } from '@url-shortener/shared';
-import { errorEnvelope } from '../utils/openapi';
+import { errorEnvelope } from '../utils/openapi.js';
 
 // OpenAPI schema (docs only — see plugins/swagger.ts). A 302 carries no JSON body,
 // so the success case is documented via the `302` response description + Location

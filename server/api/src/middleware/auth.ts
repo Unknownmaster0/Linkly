@@ -1,7 +1,7 @@
 import type { FastifyRequest } from 'fastify';
 import jwt from 'jsonwebtoken';
-import { config } from '../config';
-import { AuthError } from '../utils/errors';
+import { config } from '../config.js';
+import { AuthError } from '../utils/errors.js';
 
 interface JwtPayload {
   userId: string;

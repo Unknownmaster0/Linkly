@@ -1,4 +1,4 @@
-import type { PrismaClient } from '../generated/prisma/client';
+import type { PrismaClient } from '../generated/prisma/client.js';
 
 /**
  * All Prisma access for the daily_analytics_aggregates resource.

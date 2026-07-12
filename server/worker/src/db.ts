@@ -1,6 +1,6 @@
-import { PrismaClient } from './generated/prisma/client';
+import { PrismaClient } from './generated/prisma/client.js';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { config } from './config';
+import { config } from './config.js';
 
 // Plain (non-Fastify) Prisma client for the worker process.
 const adapter = new PrismaPg({

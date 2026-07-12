@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { RateLimitError } from '../utils/errors';
+import { RateLimitError } from '../utils/errors.js';
 
 export type RateLimitOptions = {
   /** Key builder — called per request to produce the Valkey counter key. */

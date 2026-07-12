@@ -5,7 +5,7 @@
   "main": "dist/worker.js",
   "scripts": {
     "dev": "tsx src/worker.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/fix-prisma-imports.mjs",
     "start": "node dist/worker.js",
     "type-check": "npx tsc --noEmit",
     "generate": "prisma generate",

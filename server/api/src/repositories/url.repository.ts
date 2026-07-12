@@ -1,4 +1,4 @@
-import type { PrismaClient } from '../generated/prisma/client';
+import type { PrismaClient, Prisma } from '../generated/prisma/client.js';
 
 interface CreateUrlData {
   shortCode: string;
@@ -97,7 +97,7 @@ export function createUrlRepository(prisma: PrismaClient) {
       code: string,
       userId: string
     ): Promise<{ shortCode: string; customAlias: string | null } | null> {
-      return prisma.$transaction(async (tx) => {
+      return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const record = await tx.url.findFirst({
           where: {
             OR: [{ shortCode: code }, { customAlias: code }],

@@ -1,5 +1,5 @@
-import type { UrlRepository } from '../repositories/url.repository';
-import { logger } from '../logger';
+import type { UrlRepository } from '../repositories/url.repository.js';
+import { logger } from '../logger.js';
 
 /**
  * Eager expiry sweep: soft-delete URLs whose expires_at has passed.

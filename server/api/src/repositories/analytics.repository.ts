@@ -1,4 +1,4 @@
-import type { PrismaClient } from '../generated/prisma/client';
+import type { PrismaClient } from '../generated/prisma/client.js';
 
 export interface UrlMeta {
   id: bigint;

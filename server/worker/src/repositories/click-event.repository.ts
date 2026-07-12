@@ -1,4 +1,5 @@
-import type { PrismaClient, DeviceType } from '../generated/prisma/client';
+import type { PrismaClient } from '../generated/prisma/client.js';
+import type { DeviceType } from '../generated/prisma/enums.js';
 
 export type InsertClickData = {
   urlId: bigint;

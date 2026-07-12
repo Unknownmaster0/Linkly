@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx src/server.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/fix-prisma-imports.mjs",
     "start": "node dist/server.js",
     "type-check": "npx tsc --noEmit",
     "generate": "prisma generate"

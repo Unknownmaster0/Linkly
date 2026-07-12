@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 import type { FastifyInstance } from 'fastify';
 import { rateLimitCheck as checkRateLimit } from '@url-shortener/shared';
 import type { RateLimitResult } from '@url-shortener/shared';
-import { config } from '../config';
+import { config } from '../config.js';
 
 // Shape of a URL record stored in Valkey.
 // expiresAt serialised as ISO-8601 string (Date is not JSON-safe).

@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 import type { FastifyInstance } from 'fastify';
 import { rateLimitCheck as checkRateLimit } from '@url-shortener/shared';
 import type { RateLimitResult } from '@url-shortener/shared';
-import { config } from '../config';
+import { config } from '../config.js';
 
 export type ApiCacheClient = {
   /** Evict the cached redirect entry for a short code (call on URL update / soft-delete). */

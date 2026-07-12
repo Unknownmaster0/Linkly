@@ -1,10 +1,10 @@
-import { Prisma } from '../generated/prisma/client';
-import type { PrismaClient } from '../generated/prisma/client';
-import { encodeToBase62 } from '../utils/base62';
-import { config } from '../config';
-import { ConflictError, OwnershipError } from '../utils/errors';
-import { createUrlRepository } from '../repositories/url.repository';
-import type { CreateUrlCommand, ShortenResult, UrlListResult } from '../schemas/url.schema';
+import { Prisma } from '../generated/prisma/client.js';
+import type { PrismaClient } from '../generated/prisma/client.js';
+import { encodeToBase62 } from '../utils/base62.js';
+import { config } from '../config.js';
+import { ConflictError, OwnershipError } from '../utils/errors.js';
+import { createUrlRepository } from '../repositories/url.repository.js';
+import type { CreateUrlCommand, ShortenResult, UrlListResult } from '../schemas/url.schema.js';
 
 // Auto-generated short codes are re-rolled on the (astronomically rare) chance
 // that the Base62-encoded sequence value collides with an existing custom alias
@@ -14,7 +14,8 @@ import type { CreateUrlCommand, ShortenResult, UrlListResult } from '../schemas/
 const MAX_CODE_GEN_ATTEMPTS = 5;
 
 function isUniqueViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  return (err as Prisma.PrismaClientKnownRequestError).code === 'P2002';
 }
 
 export function createUrlService(prisma: PrismaClient) {
@@ -103,7 +104,7 @@ export function createUrlService(prisma: PrismaClient) {
 
     async listUrls(userId: string): Promise<UrlListResult> {
       const records = await repo.findByUserId(userId);
-      const urls = records.map((r) => ({
+      const urls = records.map((r: { shortCode: string; originalUrl: string; customAlias: string | null; expiresAt: Date | null; createdAt: Date; clickCount: bigint }) => ({
         shortCode: r.shortCode,
         // Mirrors toResult(): a custom alias, when present, IS the short code.
         shortUrl: `${config.REDIRECT_URL}/${r.customAlias ?? r.shortCode}`,

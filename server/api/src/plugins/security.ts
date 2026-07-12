@@ -2,7 +2,7 @@ import fp from 'fastify-plugin';
 import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import type { FastifyInstance } from 'fastify';
-import { config } from '../config';
+import { config } from '../config.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Security plugin — HTTP security headers (helmet) + CORS allow-list.

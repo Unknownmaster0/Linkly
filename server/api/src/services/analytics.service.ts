@@ -1,10 +1,10 @@
-import type { PrismaClient } from '../generated/prisma/client';
-import { createAnalyticsRepository } from '../repositories/analytics.repository';
-import { OwnershipError } from '../utils/errors';
+import type { PrismaClient } from '../generated/prisma/client.js';
+import { createAnalyticsRepository } from '../repositories/analytics.repository.js';
+import { OwnershipError } from '../utils/errors.js';
 import type {
   AnalyticsSummary,
   AnalyticsEventsResult,
-} from '../schemas/analytics.schema';
+} from '../schemas/analytics.schema.js';
 
 // Resolve ISO 3166-1 alpha-2 → English country name via Intl (full ICU in Node 20).
 const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
@@ -50,7 +50,7 @@ export function createAnalyticsService(prisma: PrismaClient) {
         last30Days: counts.last30,
         dailyBreakdown: daily,
         topReferrers: referrers,
-        countries: countries.map((c) => ({
+        countries: countries.map((c: { countryCode: string; clicks: number }) => ({
           countryCode: c.countryCode,
           countryName: countryName(c.countryCode),
           clicks: c.clicks,
@@ -68,7 +68,7 @@ export function createAnalyticsService(prisma: PrismaClient) {
       const { rows, total } = await repo.listEvents(url.id, limit, offset);
 
       return {
-        events: rows.map((e) => ({
+        events: rows.map((e: { id: bigint; clickedAt: Date; countryCode: string | null; city: string | null; deviceType: string; browser: string | null; os: string | null; referrerDomain: string | null }) => ({
           id: e.id.toString(),
           clickedAt: e.clickedAt.toISOString(),
           countryCode: e.countryCode,
