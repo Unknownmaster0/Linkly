@@ -1,7 +1,7 @@
 # Design Decisions — URL Shortener
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-07-15 (added Decisions 13-14 — account deletion, geo data minimization)  
+**Last Updated:** 2026-07-16 (added Decisions 15-16 — trust proxy scope, auth rate limiting)  
 **Audience:** Development team, code reviewers
 
 ---
@@ -24,6 +24,8 @@
 | 12 | Analytics Day Bucketing | IST (`Asia/Kolkata`) via `AT TIME ZONE` in SQL; storage stays UTC | India-facing product — "a day" must mean the IST calendar day, not UTC (5.5h skew); Postgres resolves the boundary, no JS tz math, no stored local time | Bucket by UTC day OR store naive IST `TIMESTAMP` | Must remember `AT TIME ZONE` per tz-sensitive query; salt rotation coupled to the IST boundary | Daily numbers smeared 5.5h across the IST/UTC boundary; or (if storing local) `NOW()`/`expires_at < now` silently off by 5.5h |
 | 13 | Account Deletion | Anonymize `users` row + soft-delete owned `urls`; never hard-delete a user | `urls` → `click_events` cascade off `users` (`onDelete: Cascade`); a hard delete would silently destroy analytics history for every URL the account owned | Hard `DELETE FROM users` | Anonymized row (placeholder email/name) stays in the table forever; `email` unique index holds a dead placeholder value | Hard delete cascades and erases click-event history for URLs the deleted user owned |
 | 14 | Geo Enrichment Data Minimization | Request/store `countryCode` only from the geo-IP provider; never log the raw IP | Country-level is all the locked analytics contract (`GET /api/analytics/:shortCode`) exposes; `city` had no consumer and is materially more identifying per visitor | Also fetch/store `city` (previous behavior) | Slightly less granular geo data available for any future feature | City-level per-click location data sent to & retained from a third party with no product need for it; raw IP logged if debug logging is ever enabled in production |
+| 15 | Trust Proxy Scope | `trustProxy: 'loopback'` on both `api` and `redirect` | Same-host nginx reverse proxy; must read the real client IP for rate limiting + analytics without trusting a spoofable header | `trustProxy: true` (trusts the whole X-Forwarded-For chain) OR unset (trusts nothing, always sees the proxy's own IP) | Coupled to the nginx-same-host topology; must be revisited if a different/multi-hop proxy is introduced | `true` → any caller spoofs `request.ip` via a forged header, bypassing per-IP rate limits and poisoning click analytics; unset → every request looks like it came from `127.0.0.1`, collapsing all per-IP limits into one shared bucket |
+| 16 | Auth Rate Limiting | Per-IP (register + login) **and** per-account (login only) | Per-IP alone doesn't stop a distributed attacker (many source IPs) credential-stuffing one victim account | Account lockout (lets an attacker DoS a victim by deliberately failing their login) OR CAPTCHA (deferred — extra dependency + UX friction) | The per-account bucket is keyed off the request body before Zod validates it, so malformed/missing emails share one fallback bucket | Per-IP-only → distributed credential stuffing against a single account is unbounded; no rate limiting at all → registration/login are trivially abusable for mass signup or brute force |
 
 ---
 
@@ -243,6 +245,11 @@ Valkey is single-threaded. A Lua script runs to completion without interruption 
 
 **Interview Question This Answers:**
 "What's the race condition in naive rate limiting, and how does Lua script fix it?"
+
+**Implementation note (2026-07-16):** the create-endpoint config (`RATE_LIMIT_CREATE_LIMIT` /
+`RATE_LIMIT_WINDOW_SECS`) had drifted to `10` req / `60`s (= 600/hour) — six times looser than
+the `100/hour` documented above. Corrected the defaults to `100` / `3600` so the running
+config matches this decision. See Decision 16 for the auth-endpoint limits added the same day.
 
 ---
 
@@ -573,6 +580,91 @@ that doesn't exist.
 
 **Interview Question This Answers:**
 "How do you audit a third-party integration for data minimization?"
+
+---
+
+### Decision 15: Trust Proxy Scope (Loopback, Not Wildcard)
+
+**Added:** 2026-07-16, alongside a pass over the error handler, cookie flags, and CSP.
+
+**Problem:**
+`api` and `redirect` sit behind nginx on the same EC2 host ([[project_deployment_topology_ec2_same_host]]).
+Fastify's `request.ip` has to reflect the real client IP — the per-IP login/register/redirect
+rate limiters key off it, and so does the analytics pipeline's IP-hashing + geo lookup. Neither
+Fastify instance had a `trustProxy` setting at all before this change, and naively trusting the
+proxy chain is its own hazard.
+
+**Why `'loopback'` Wins:**
+
+| `trustProxy: true` | `trustProxy` unset | **`'loopback'` (chosen)** |
+|---|---|---|
+| ❌ Trusts the *entire* `X-Forwarded-For` chain — a caller can prepend a forged IP before it reaches nginx | ❌ Reads the raw socket peer — always `127.0.0.1` in this topology (nginx is the only thing that ever connects) | ✅ Trusts only the immediate socket peer (nginx) and reads the `X-Forwarded-For` entry *nginx itself* appended |
+| ❌ Bypasses per-IP rate limits; poisons click analytics (unique-visitor hashing + geo lookup both key off `request.ip`) | ❌ Every request collapses into one shared IP — rate limits and per-visitor analytics become meaningless | ✅ Anything an external caller injected further up the chain is ignored |
+
+**Implementation:** `Fastify({ trustProxy: 'loopback' })` in both `api/src/app.ts` and
+`redirect/src/app.ts`.
+
+**Trade-off Accepted:**
+This is coupled to the current deployment topology (single EC2 host, nginx same-box). If a
+different reverse proxy or an additional hop (e.g. a CDN in front of nginx) is introduced,
+`'loopback'` must be revisited — likely to a list of trusted hop IPs — or client IPs will
+silently resolve to the wrong hop again.
+
+**Interview Question This Answers:**
+"You're already behind a reverse proxy — why scope `trustProxy` to `'loopback'` instead of
+just setting it to `true`?"
+
+---
+
+### Decision 16: Auth Endpoint Rate Limiting — Per-IP + Per-Account
+
+**Added:** 2026-07-16. The per-IP guards landed first; a same-day security review (checking
+IDOR, auth bypass, and abuse paths against the running code) found the per-IP-only version
+insufficient and the per-account guard was added immediately after.
+
+**Problem:**
+`POST /api/auth/register` and `POST /api/auth/login` had **no rate limiting at all** — nothing
+stopped mass account creation or unlimited login attempts against any account.
+
+**Step 1 — Per-IP (closes the obvious gap):**
+Two independent fixed-window buckets, keyed by `request.ip` (see Decision 15 for why that's
+trustworthy here): `rl:register:<ip>` and `rl:login:<ip>`, 5 requests / 60s each by default
+(`RATE_LIMIT_REGISTER_LIMIT`/`_WINDOW_SECS`, `RATE_LIMIT_LOGIN_LIMIT`/`_WINDOW_SECS`).
+
+**Step 2 — Per-account (closes the gap Step 1 leaves open):**
+Per-IP limiting alone doesn't stop a *distributed* attacker: a botnet or residential-proxy
+pool gets a fresh 5-request allowance on every new source IP, so the **target account** is
+never throttled even though each individual IP is. A second guard on `/login` — keyed by the
+submitted email, not the caller's IP (`rl:login:acct:<email>`, default 10 requests / 900s) —
+means every attempt against the *same account* shares one bucket regardless of how many IPs
+the attacker rotates through.
+
+```
+Per-IP only:                              Per-IP + per-account:
+  attacker rotates 1000 IPs        attacker rotates 1000 IPs
+  → 1000 × 5 = 5000 guesses         → still capped at 10 guesses total
+    against the victim account        against the victim account
+```
+
+**Why Not Account Lockout:**
+Locking the account after N failures would let an attacker **deny a legitimate user access**
+just by deliberately failing their login a few times — trading an availability problem for
+users for a weaker attacker deterrent. A time-boxed rate limit (not a lockout) bounds the
+attacker's guess rate without giving them a griefing lever.
+
+**Why Not CAPTCHA:**
+Effective against scripted abuse but adds a third-party dependency and login-flow friction;
+deferred — the rate-limit combination above closes the practical gap without it.
+
+**Implementation Detail:** the per-account key reads `request.body.email` in the `preHandler`,
+*before* Zod validates it in the route handler (Fastify's body-parsing runs ahead of
+`preHandler` in the request lifecycle, even though validation happens later in this codebase's
+Zod-in-handler pattern). A missing/malformed email is normalized to one shared `unknown`
+bucket — acceptable, since that request fails Zod validation immediately after anyway.
+
+**Interview Question This Answers:**
+"You rate-limit login by IP — an attacker still gets through with a botnet. What closes that
+gap, and why not just lock the account after N failures?"
 
 ---
 

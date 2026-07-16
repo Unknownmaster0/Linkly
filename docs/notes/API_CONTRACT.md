@@ -1,7 +1,8 @@
 # API Contract — Routes & Specifications
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-04-18  
+**Last Updated:** 2026-07-16 (register/login rate limits documented + Rate Limits Reference
+table added; `DELETE /api/auth/account` added 2026-07-15)  
 **Base URL:** `http://localhost:3000` (development) | `https://api.short.url` (production)
 
 ---
@@ -25,7 +26,8 @@
 
 **Auth Required:** No
 
-**Rate Limited:** No
+**Rate Limited:** Yes — 5 requests / 60s per IP (`RATE_LIMIT_REGISTER_LIMIT` /
+`RATE_LIMIT_REGISTER_WINDOW_SECS`; added 2026-07-16, see DECISIONS.md #16)
 
 **Request Schema:**
 
@@ -77,6 +79,7 @@ Set-Cookie: refreshToken=eyJhbGciOiJIUzI1NiIs...; HttpOnly; Secure; SameSite=Str
 | 400 | Password too short | `{ "error": "Password must be at least 8 characters", "details": { "field": "password", "minLength": 8 } }` |
 | 400 | Passwords don't match | `{ "error": "Passwords do not match", "details": { "field": "confirmPassword" } }` |
 | 409 | Email already registered | `{ "error": "Email already registered", "details": { "field": "email" } }` |
+| 429 | Rate limit exceeded | `{ "error": "Rate limit exceeded", "retryAfter": 60 }` |
 | 500 | Database error | `{ "error": "Internal server error" }` |
 
 **Notes:**
@@ -92,7 +95,12 @@ Set-Cookie: refreshToken=eyJhbGciOiJIUzI1NiIs...; HttpOnly; Secure; SameSite=Str
 
 **Auth Required:** No
 
-**Rate Limited:** No
+**Rate Limited:** Yes — **two independent guards**, both must pass (added 2026-07-16, see
+DECISIONS.md #16):
+- Per IP: 5 requests / 60s (`RATE_LIMIT_LOGIN_LIMIT` / `RATE_LIMIT_LOGIN_WINDOW_SECS`)
+- Per account (keyed by the submitted `email`, not the caller's IP): 10 requests / 900s
+  (`RATE_LIMIT_LOGIN_ACCOUNT_LIMIT` / `RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SECS`) — stops a
+  distributed attacker (many source IPs) from credential-stuffing one victim account
 
 **Request Schema:**
 
@@ -139,6 +147,7 @@ Set-Cookie: refreshToken=eyJhbGciOiJIUzI1NiIs...; HttpOnly; Secure; SameSite=Str
 | Status | Response |
 |--------|----------|
 | 401 | `{ "error": "Invalid email or password" }` (same for both) |
+| 429 | `{ "error": "Rate limit exceeded", "retryAfter": <seconds> }` — from either guard |
 
 **Notes:**
 - Don't distinguish between "email not found" and "password wrong" (security)
@@ -844,6 +853,24 @@ X-RateLimit-Limit: 100  (if rate-limited route)
 X-RateLimit-Remaining: 99  (if rate-limited route)
 X-RateLimit-Reset: 1713474060  (if rate-limited route)
 ```
+
+### Rate Limits Reference
+
+Every limit below is a Valkey-backed fixed-window counter (see DECISIONS.md #6), fails open
+if Valkey is unreachable, and returns `429 { error, retryAfter }` on the offending request.
+
+| Endpoint | Key | Default limit | Env vars |
+|---|---|---|---|
+| `POST /api/urls` | per user | 100 req / 3600s | `RATE_LIMIT_CREATE_LIMIT`, `RATE_LIMIT_WINDOW_SECS` |
+| `POST /api/auth/register` | per IP | 5 req / 60s | `RATE_LIMIT_REGISTER_LIMIT`, `RATE_LIMIT_REGISTER_WINDOW_SECS` |
+| `POST /api/auth/login` | per IP | 5 req / 60s | `RATE_LIMIT_LOGIN_LIMIT`, `RATE_LIMIT_LOGIN_WINDOW_SECS` |
+| `POST /api/auth/login` | per account (email) | 10 req / 900s | `RATE_LIMIT_LOGIN_ACCOUNT_LIMIT`, `RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SECS` |
+| `GET /:shortCode` (redirect server) | per IP | 100 req / 60s | `RATE_LIMIT_REDIRECT_LIMIT`, `RATE_LIMIT_WINDOW_SECS` (redirect service) |
+
+`POST /api/auth/login` is the only endpoint with two independent guards — a request must pass
+both to succeed (DECISIONS.md #16). `POST /api/auth/refresh`, `POST /api/auth/logout`,
+`DELETE /api/auth/account`, `GET /api/urls`, `DELETE /api/urls/:shortCode`, and both analytics
+routes are **not** rate limited.
 
 ---
 

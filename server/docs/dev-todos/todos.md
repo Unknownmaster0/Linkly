@@ -15,12 +15,19 @@ Items tracked here are **not bugs** — they are working implementations that de
 
 ---
 
-### [TODO-002] Config fallback defaults for secrets in production
+### [TODO-002] [FIXED — 2026-07-15] Config fallback defaults for secrets in production
 
 **File:** `api/src/config.ts`  
 **Current:** `JWT_SECRET` and `DATABASE_URL` fall back to hardcoded defaults if env vars are missing.  
 **Required:** In `production` env, missing required secrets must throw at startup — not silently use a known default. Silent fallback is a security vulnerability (OWASP A02: Cryptographic Failures).  
-**Fix:** Add startup validation — if `NODE_ENV === 'production'` and required vars are unset, throw with a descriptive message before the server starts.
+**Fix:** Add startup validation — if `NODE_ENV === 'production'` and required vars are unset, throw with a descriptive message before the server starts.  
+**Resolution (2026-07-15, account-deletion/security-audit commit):** `config.ts` now calls a
+`requireEnv(name)` helper that throws `Missing required environment variable: <name>` at
+startup for both `JWT_SECRET` and `JWT_REFRESH_SECRET` — no hardcoded fallback remains, in
+production or otherwise. The same fix was applied to `worker/src/config.ts` (`IP_HASH_SECRET`)
+and `docker-compose.yml` (Postgres `admin`/`secret` defaults removed in favor of required
+`.env` values). See root `README.md` § "Secret Rotation Warning" for the credential-rotation
+follow-up this required.
 
 ---
 

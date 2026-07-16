@@ -1,7 +1,7 @@
 # System Flows — Mermaid Diagrams
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-04-18  
+**Last Updated:** 2026-07-16 (added Flow 9 — Delete Account; noted auth rate limiting on Flow 7)  
 **Purpose:** Visual specification of data flow through the system
 
 ---
@@ -359,6 +359,11 @@ sequenceDiagram
     end
 ```
 
+**Also rate limited (added 2026-07-16, DECISIONS.md #16):** `POST /api/auth/register` (per IP)
+and `POST /api/auth/login` (per IP **and** per submitted email — two independent buckets, both
+must allow the request). Same fixed-window mechanism, different keys: `rl:register:<ip>`,
+`rl:login:<ip>`, `rl:login:acct:<email>`.
+
 ---
 
 ## Flow 8: Authentication Token Lifecycle
@@ -403,6 +408,61 @@ graph LR
     P --> Q["Mark refresh token<br/>as revoked in DB"]
     Q --> R["Clear cookie"]
     R --> S["Next attempt<br/>with old token fails"]
+```
+
+---
+
+## Flow 9: Delete Account (Anonymize + Cascade Soft-Delete)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Client
+    participant Server
+    participant AuthService
+    participant DB as PostgreSQL
+
+    User->>Client: DELETE /api/auth/account<br/>{ password }
+    Client->>Server: Send request + JWT + current password
+
+    rect rgb(200, 220, 255)
+        note over Server: AUTH & PASSWORD RE-VERIFICATION
+        Server->>AuthService: Verify JWT token
+        AuthService-->>Server: userId verified
+        Server->>DB: SELECT passwordHash<br/>WHERE id = userId AND isActive = true
+        DB-->>Server: Record (or NULL)
+        Server->>Server: argon2.verify(hash, password)
+    end
+
+    alt Not authenticated, already inactive, or wrong password
+        rect rgb(255, 200, 200)
+            note over Server: Same generic message on any failure<br/>(no enumeration of "already deleted" vs "wrong password")
+        end
+        Server-->>Client: 401 { error: "Invalid password" }
+    else Password verified
+        rect rgb(255, 240, 200)
+            note over Server,DB: ONE TRANSACTION (auth.repository.ts → deleteAccount)
+            Server->>DB: UPDATE users SET<br/>email = 'deleted-&lt;userId&gt;@deleted.invalid',<br/>name = '', passwordHash = random(32),<br/>isActive = false<br/>WHERE id = userId
+            DB-->>Server: ✓ Updated (trg_users_updated_at stamps updatedAt = deletion time)
+
+            Server->>DB: UPDATE urls SET is_deleted = true<br/>WHERE userId = userId AND is_deleted = false
+            DB-->>Server: ✓ All owned URLs soft-deleted
+
+            Server->>DB: DELETE FROM refresh_tokens<br/>WHERE userId = userId
+            DB-->>Server: ✓ Hard-deleted (purges stored User-Agent too)
+        end
+
+        rect rgb(220, 255, 220)
+            note over DB: ✓ click_events preserved — same soft-delete<br/>principle as manual URL deletion (Decision 8)
+        end
+
+        Server-->>Client: 204 No Content<br/>Set-Cookie: refreshToken=; Max-Age=0
+        Client-->>User: ✅ Account deleted, logged out
+    end
+
+    rect rgb(255, 200, 200)
+        note over Server: Never a hard DELETE FROM users —<br/>urls → click_events cascade off users<br/>(onDelete: Cascade) would destroy analytics history (Decision 13)
+    end
 ```
 
 ---

@@ -93,11 +93,16 @@ Credentials come from a root-level `.env` (gitignored, never committed) — copy
 `.env.example` to `.env` first:
 
 ```bash
-cp .env.example .env   # fill in POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+cp .env.example .env   # fill in POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB / VALKEY_PASSWORD
 docker compose up -d
 ```
 
-Valkey needs no credentials for local development: `redis://localhost:6379`.
+**Valkey now requires a password** (2026-07-16 — `docker-compose.yml` runs it with
+`--requirepass ${VALKEY_PASSWORD}`, previously it had none). Mirror the same value into every
+service's `VALKEY_URL`: `redis://:<VALKEY_PASSWORD>@localhost:6379`.
+
+Both containers' ports are bound to `127.0.0.1` only, not `0.0.0.0` — they're reachable from
+this machine but not from the network, matching the same-EC2-host deployment topology.
 
 ### API Server (`server/api/`)
 
@@ -106,20 +111,24 @@ Create `.env` from `.env.example`:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | `postgresql://user:password@localhost:5432/database` | PostgreSQL connection string |
-| `VALKEY_URL` | No | `redis://localhost:6379` | Valkey/Redis connection string |
+| `VALKEY_URL` | No | `redis://:<VALKEY_PASSWORD>@localhost:6379` | Valkey/Redis connection string — Valkey now requires a password (see above); no password → connection fails, rate limiting and caching fail open to "allow"/"miss" |
 | `JWT_SECRET` | Yes | — | Secret for signing/verifying JWT access tokens. No fallback — server refuses to start without it |
 | `JWT_REFRESH_SECRET` | Yes | — | Secret for signing/verifying JWT refresh tokens. No fallback — server refuses to start without it |
 | `BASE_URL` | Yes | `http://localhost:3000` | Public base URL for constructing short links |
 | `NODE_ENV` | No | `development` | `development` \| `production` \| `test` |
 | `PORT` | No | `3000` | API server port |
 | `DEFAULT_URL_TTL_DAYS` | No | `7` | Default expiry when no `ttlDays` provided |
+| `RATE_LIMIT_CREATE_LIMIT` / `RATE_LIMIT_WINDOW_SECS` | No | `100` / `3600` | `POST /api/urls` — per-user limit (DECISIONS.md #6) |
+| `RATE_LIMIT_LOGIN_LIMIT` / `RATE_LIMIT_LOGIN_WINDOW_SECS` | No | `5` / `60` | `POST /api/auth/login` — per-IP guard (DECISIONS.md #16) |
+| `RATE_LIMIT_LOGIN_ACCOUNT_LIMIT` / `RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SECS` | No | `10` / `900` | `POST /api/auth/login` — per-account guard, closes the distributed-credential-stuffing gap the IP guard leaves open (DECISIONS.md #16) |
+| `RATE_LIMIT_REGISTER_LIMIT` / `RATE_LIMIT_REGISTER_WINDOW_SECS` | No | `5` / `60` | `POST /api/auth/register` — per-IP guard |
 
 ### Redirect Server (`server/redirect/`)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | `postgresql://user:password@localhost:5432/database` | PostgreSQL connection string |
-| `VALKEY_URL` | No | `redis://localhost:6379` | Valkey/Redis connection string |
+| `VALKEY_URL` | No | `redis://:<VALKEY_PASSWORD>@localhost:6379` | Valkey/Redis connection string — requires a password, see above |
 | `BASE_URL` | Yes | `http://localhost:3000` | Public base URL for constructing short links |
 | `NODE_ENV` | No | `development` | `development` \| `production` \| `test` |
 | `PORT` | No | `3001` | Redirect server port |
@@ -131,7 +140,7 @@ Create `.env` from `.env.example`:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | `postgresql://user:password@localhost:5432/database` | PostgreSQL connection string |
-| `VALKEY_URL` | No | `redis://localhost:6379` | Valkey/Redis connection string |
+| `VALKEY_URL` | No | `redis://:<VALKEY_PASSWORD>@localhost:6379` | Valkey/Redis connection string — requires a password, see above |
 | `NODE_ENV` | No | `development` | `development` \| `production` \| `test` |
 | `PORT` | No | `3000` | Worker port (for health checks) |
 | `IP_HASH_SECRET` | Yes | — | Secret for hashing IPs (generate: `openssl rand -hex 32`) |
@@ -205,6 +214,47 @@ consumer — removed as unnecessary data collection, see Decision 14).
   (click-event history is preserved, same policy as manual URL deletion), and purges the
   user's refresh tokens (including the stored User-Agent string). Requires the current
   password. See Decision 13.
+
+---
+
+## 🔒 Security & Infrastructure Hardening (2026-07-16)
+
+A follow-up pass (partly a same-day attacker-simulation review: IDOR, auth bypass, privilege
+escalation, feature abuse, injection, internal exposure, business-logic checks against the
+running code) found and fixed the following. Full rationale in `docs/notes/DECISIONS.md`
+(#15, #16).
+
+- **Auth endpoints had zero rate limiting.** `POST /api/auth/register` and
+  `POST /api/auth/login` now enforce a per-IP guard (5 req/60s each). A same-day review found
+  per-IP alone insufficient — a botnet/proxy pool gets a fresh bucket per IP, so one victim
+  account could still be credential-stuffed without limit — so login also got a **per-account**
+  guard (10 req/900s, keyed by the submitted email). See Decision 16.
+- **`trustProxy` was unset on both Fastify servers.** Added `trustProxy: 'loopback'` (api +
+  redirect) — trusts only the nginx socket peer and reads the `X-Forwarded-For` entry nginx
+  itself appended, so a caller can't spoof `request.ip` to bypass per-IP rate limits or poison
+  click analytics (unique-visitor hashing + geo lookup both key off it). See Decision 15.
+- **URL-creation rate limit had drifted from the spec.** `RATE_LIMIT_CREATE_LIMIT` /
+  `RATE_LIMIT_WINDOW_SECS` defaults were `10`/`60` (= 600/hour) against a documented
+  `100/hour` — six times looser than intended. Corrected to `100`/`3600`.
+  See Decision 6's implementation note.
+- **Valkey had no password.** `docker-compose.yml` now runs it with `--requirepass
+  ${VALKEY_PASSWORD}`; every service's `VALKEY_URL` must include it (see the env var tables
+  above). Postgres and Valkey container ports are also now bound to `127.0.0.1` only, not the
+  network.
+- **The global error handler trusted any object with a `.statusCode`.** Both servers' handlers
+  now only pass through a caught error's status/message when it's a genuine Fastify framework
+  error (`code` starts with `FST_ERR_`) — anything else, regardless of what `.statusCode` it
+  claims, collapses to a generic `500`. Prevents a third-party library's error object from
+  leaking its message to the client via a bolted-on `.statusCode`.
+- **The refresh cookie's `Secure` flag had a fail-open default.** It dropped `Secure` for
+  anything that wasn't exactly `NODE_ENV === 'production'`. Flipped to fail-safe: only the
+  explicit `'development'` value drops `Secure`; an unset/misconfigured `NODE_ENV` now keeps
+  the cookie `Secure` rather than silently downgrading it.
+- **CSP `script-src` was implicit.** Both servers' Content-Security-Policy now explicitly sets
+  `script-src 'self'` (alongside the existing `default-src 'self'`).
+- **A second stray debug log leaked click-processing internals.** `analytics.job.ts` had a
+  `logger.debug({ shortCode, geo, ua }, ...)` line left over from development, independent of
+  the raw-IP debug log already removed in the 2026-07-15 privacy audit above. Removed.
 
 ---
 

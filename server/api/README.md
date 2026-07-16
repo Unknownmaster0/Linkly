@@ -51,25 +51,37 @@ Copy `.env.example` to `.env` and fill in:
 
 ```env
 DATABASE_URL=postgresql://admin:secret@localhost:5432/urlshortener
-VALKEY_URL=redis://localhost:6379
+VALKEY_URL=redis://:<valkey-password>@localhost:6379
 JWT_SECRET=<generate-a-long-random-secret>
 JWT_REFRESH_SECRET=<generate-a-different-long-random-secret>
 BASE_URL=http://localhost:3000
 NODE_ENV=development
 PORT=3000
 DEFAULT_URL_TTL_DAYS=7
+RATE_LIMIT_CREATE_LIMIT=100
+RATE_LIMIT_WINDOW_SECS=3600
+RATE_LIMIT_LOGIN_LIMIT=5
+RATE_LIMIT_LOGIN_WINDOW_SECS=60
+RATE_LIMIT_LOGIN_ACCOUNT_LIMIT=10
+RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SECS=900
+RATE_LIMIT_REGISTER_LIMIT=5
+RATE_LIMIT_REGISTER_WINDOW_SECS=60
 ```
 
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `VALKEY_URL` | No | Valkey/Redis URL (defaults to `redis://localhost:6379`) |
+| `VALKEY_URL` | No | Valkey/Redis URL — Valkey requires a password (`docker-compose.yml` runs `--requirepass`); defaults to `redis://localhost:6379` only if no password is set |
 | `JWT_SECRET` | Yes | Secret used to sign/verify JWT access tokens — no default, server refuses to start without it |
 | `JWT_REFRESH_SECRET` | Yes | Secret used to sign/verify JWT refresh tokens — no default, server refuses to start without it |
 | `BASE_URL` | Yes | Public base URL for constructing short links |
 | `NODE_ENV` | No | `development` \| `production` \| `test` |
 | `PORT` | No | Server port (default `3000`) |
 | `DEFAULT_URL_TTL_DAYS` | No | Expiry applied when no `ttlDays` is given (default `7`) |
+| `RATE_LIMIT_CREATE_LIMIT` / `RATE_LIMIT_WINDOW_SECS` | No | `POST /api/urls` per-user limit (default `100`/`3600`) |
+| `RATE_LIMIT_LOGIN_LIMIT` / `RATE_LIMIT_LOGIN_WINDOW_SECS` | No | `POST /api/auth/login` per-IP guard (default `5`/`60`) |
+| `RATE_LIMIT_LOGIN_ACCOUNT_LIMIT` / `RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SECS` | No | `POST /api/auth/login` per-account guard, keyed by email (default `10`/`900`) |
+| `RATE_LIMIT_REGISTER_LIMIT` / `RATE_LIMIT_REGISTER_WINDOW_SECS` | No | `POST /api/auth/register` per-IP guard (default `5`/`60`) |
 
 ## Setup
 
@@ -192,7 +204,9 @@ Content-Type: application/json
 > Auth routes (`POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`,
 > `POST /api/auth/logout`, `DELETE /api/auth/account`) and analytics routes
 > (`GET /api/analytics/:shortCode`, `GET /api/analytics/:shortCode/events`) are implemented —
-> see `../../docs/notes/API_CONTRACT.md` for full request/response shapes.
+> see `../../docs/notes/API_CONTRACT.md` for full request/response shapes. Register and login
+> are rate limited (register: per IP; login: per IP **and** per submitted account) — see the
+> Rate Limits Reference table in `API_CONTRACT.md` and Decision 16 in `DECISIONS.md`.
 
 ## Core Modules
 
@@ -239,6 +253,12 @@ A global `setErrorHandler` maps Prisma error codes to HTTP statuses before any r
 | `P2025` | `404` (record not found) |
 | `P2034` | `409` + `Retry-After: 1` (write conflict) |
 | `P2003`–`P2014` | `400` (invalid data) |
+
+Any other caught value only has its own status/message passed through if it's a genuine
+Fastify framework error (its `code` starts with `FST_ERR_`) — everything else, no matter what
+`.statusCode` it claims to carry, collapses to a generic `500`. This stops a third-party
+library's error object from leaking its message to a client just by having a `.statusCode`
+property bolted on.
 
 ## Architecture Patterns
 
