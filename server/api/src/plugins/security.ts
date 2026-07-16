@@ -25,6 +25,7 @@ async function securityPlugin(app: FastifyInstance): Promise<void> {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
         baseUri: ["'self'"],
         frameAncestors: ["'none'"],
       },

@@ -27,6 +27,14 @@ export async function createApp() {
     genReqId,
     requestIdHeader: REQUEST_ID_HEADER,
     requestIdLogLabel: REQUEST_ID_LOG_LABEL,
+    // Deployment topology: nginx reverse-proxies to this app on the same EC2
+    // host. 'loopback' trusts only the 127.0.0.1/::1 socket peer (nginx) and
+    // reads the real client IP from the X-Forwarded-For entry nginx itself
+    // appended — anything an external caller injects further up the chain is
+    // ignored. Must stay scoped to loopback, never `true`: that would trust
+    // the whole X-Forwarded-For chain, letting a caller spoof request.ip
+    // (and bypass the per-IP login/register rate limits) with a forged header.
+    trustProxy: 'loopback',
   });
 
   // Echo the request id back so clients (and downstream services) can quote it
@@ -102,15 +110,21 @@ export async function createApp() {
       return reply.status(400).send(errorResponse(error.message));
     }
 
-    // FastifyError with a non-5xx statusCode (404 route not found, 415 unsupported media, etc.)
+    // Only Fastify's own framework errors (415 unsupported media, malformed JSON
+    // body, etc. — all carry a `FST_ERR_*` code) get their message and status
+    // passed through. A `.statusCode` alone is not proof of trustworthy origin:
+    // any third-party error object can bolt one on, and passing its `.message`
+    // straight to the client would bypass the "unexpected error → generic
+    // message" rule. Everything else — regardless of what it claims its status
+    // is — falls back to a generic 500.
+    const isFastifyError =
+      isErrorObj && typeof asRecord['code'] === 'string' && asRecord['code'].startsWith('FST_ERR_');
     const statusCode =
-      isErrorObj &&
-      'statusCode' in error &&
-      typeof asRecord['statusCode'] === 'number'
+      isFastifyError && typeof asRecord['statusCode'] === 'number'
         ? (asRecord['statusCode'] as number)
         : 500;
 
-    if (statusCode >= 500) {
+    if (!isFastifyError || statusCode >= 500) {
       request.log.error({ err: error }, 'Unhandled server error');
       return reply.status(500).send(errorResponse('Internal server error'));
     }
@@ -118,8 +132,7 @@ export async function createApp() {
     if (statusCode === 401) {
       reply.header('WWW-Authenticate', 'Bearer realm="url-shortener"');
     }
-    const message = isErrorObj ? error.message : 'Internal server error';
-    return reply.status(statusCode).send(errorResponse(message));
+    return reply.status(statusCode).send(errorResponse(error.message));
   });
 
   // ── Routes ─────────────────────────────────────────────────────────────────

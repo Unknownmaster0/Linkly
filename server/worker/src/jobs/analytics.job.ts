@@ -130,9 +130,6 @@ export function createClickProcessor(
     const geo = await lookupGeo(ip);
     const ua = parseUserAgent(userAgent);
 
-    // want to log the geo and ua object properties, to see in the console for debugging purposes.
-    logger.debug({ shortCode, geo, ua }, 'Recording click with geo and user agent info');
-
     try {
       await repo.insertClick({
         urlId,

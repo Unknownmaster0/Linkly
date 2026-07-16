@@ -37,4 +37,10 @@ export const config = {
   DEFAULT_URL_TTL_DAYS:    parseInt(process.env['DEFAULT_URL_TTL_DAYS'] ?? '7', 10),
   RATE_LIMIT_CREATE_LIMIT: parseInt(process.env['RATE_LIMIT_CREATE_LIMIT'] ?? '10', 10),
   RATE_LIMIT_WINDOW_SECS:  parseInt(process.env['RATE_LIMIT_WINDOW_SECS']  ?? '60',  10),
+  // Brute-force / credential-stuffing guards — keyed by IP since the caller
+  // isn't authenticated yet at this point.
+  RATE_LIMIT_LOGIN_LIMIT:     parseInt(process.env['RATE_LIMIT_LOGIN_LIMIT']     ?? '5', 10),
+  RATE_LIMIT_LOGIN_WINDOW_SECS: parseInt(process.env['RATE_LIMIT_LOGIN_WINDOW_SECS'] ?? '60', 10),
+  RATE_LIMIT_REGISTER_LIMIT:  parseInt(process.env['RATE_LIMIT_REGISTER_LIMIT']  ?? '5', 10),
+  RATE_LIMIT_REGISTER_WINDOW_SECS: parseInt(process.env['RATE_LIMIT_REGISTER_WINDOW_SECS'] ?? '60', 10),
 };

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authenticate } from '../middleware/auth.js';
 import { createAuthService } from '../services/auth.service.js';
+import { makeRateLimiter } from '../middleware/rateLimit.js';
 import {
   registerBodySchema,
   loginBodySchema,
@@ -40,12 +41,14 @@ const registerSchema = {
   description:
     'Creates an account and returns an access token plus a `refreshToken` httpOnly ' +
     'cookie. Password must be 8–128 chars with at least one uppercase, one ' +
-    'lowercase, and one number; `confirmPassword` must equal `password`.',
+    'lowercase, and one number; `confirmPassword` must equal `password`.\n\n' +
+    'Rate limited per IP (see `X-RateLimit-*` response headers).',
   body: zodToJsonSchema(registerBodySchema),
   response: {
     201: successEnvelope(authResultData, 'Registration successful'),
     400: errorEnvelope('Validation failed', { error: 'Passwords do not match', details: { field: 'confirmPassword' } }),
     409: errorEnvelope('Email already registered', { error: 'Email already registered', details: { field: 'email' } }),
+    429: errorEnvelope('Rate limit exceeded', { error: 'Rate limit exceeded', retryAfter: 60 }),
   },
 };
 
@@ -55,11 +58,13 @@ const loginSchema = {
   description:
     'Authenticates a user and returns an access token plus a refreshed ' +
     '`refreshToken` httpOnly cookie. A single generic 401 is used for both ' +
-    'unknown email and wrong password (no user enumeration).',
+    'unknown email and wrong password (no user enumeration).\n\n' +
+    'Rate limited per IP (see `X-RateLimit-*` response headers).',
   body: zodToJsonSchema(loginBodySchema),
   response: {
     200: successEnvelope(authResultData, 'Login successful'),
     401: errorEnvelope('Invalid credentials', { error: 'Invalid email or password' }),
+    429: errorEnvelope('Rate limit exceeded', { error: 'Rate limit exceeded', retryAfter: 60 }),
   },
 };
 
@@ -124,7 +129,12 @@ function parseCookies(request: FastifyRequest): Record<string, string> {
 const REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days in seconds
 
 function setRefreshCookie(reply: FastifyReply, token: string): void {
-  const secure = config.NODE_ENV === 'production' ? '; Secure' : '';
+  // Fail-safe, not fail-open: only the explicit 'development' value drops the
+  // Secure flag. If NODE_ENV is ever left unset in a real deployment, it falls
+  // back to the shared config's 'development' default — but that must NOT
+  // silently downgrade cookie security, so every other value (production,
+  // test, or unset-and-defaulted) keeps Secure on.
+  const secure = config.NODE_ENV === 'development' ? '' : '; Secure';
   reply.header(
     'Set-Cookie',
     `refreshToken=${token}; HttpOnly; SameSite=Strict; Max-Age=${REFRESH_COOKIE_MAX_AGE}; Path=/${secure}`
@@ -139,11 +149,25 @@ function clearRefreshCookie(reply: FastifyReply): void {
 // Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Pre-auth brute-force guards — keyed by IP, since neither endpoint has a
+// userId yet at this point. Limits per production security requirements.
+const loginRateLimit = makeRateLimiter({
+  key: (request: FastifyRequest) => `rl:login:${request.ip}`,
+  limit: config.RATE_LIMIT_LOGIN_LIMIT,
+  windowSecs: config.RATE_LIMIT_LOGIN_WINDOW_SECS,
+});
+
+const registerRateLimit = makeRateLimiter({
+  key: (request: FastifyRequest) => `rl:register:${request.ip}`,
+  limit: config.RATE_LIMIT_REGISTER_LIMIT,
+  windowSecs: config.RATE_LIMIT_REGISTER_WINDOW_SECS,
+});
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   const authService = createAuthService(app.prisma);
 
   // POST /api/auth/register
-  app.post('/register', { schema: registerSchema }, async (request, reply) => {
+  app.post('/register', { preHandler: [registerRateLimit], schema: registerSchema }, async (request, reply) => {
     const parsed = registerBodySchema.safeParse(request.body);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -165,7 +189,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // POST /api/auth/login
-  app.post('/login', { schema: loginSchema }, async (request, reply) => {
+  app.post('/login', { preHandler: [loginRateLimit], schema: loginSchema }, async (request, reply) => {
     const parsed = loginBodySchema.safeParse(request.body);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];

@@ -24,6 +24,15 @@ export async function createApp() {
     genReqId,
     requestIdHeader: REQUEST_ID_HEADER,
     requestIdLogLabel: REQUEST_ID_LOG_LABEL,
+    // Deployment topology: nginx reverse-proxies to this app on the same EC2
+    // host. 'loopback' trusts only the 127.0.0.1/::1 socket peer (nginx) and
+    // reads the real client IP from the X-Forwarded-For entry nginx itself
+    // appended — anything an external caller injects further up the chain is
+    // ignored. Must stay scoped to loopback, never `true`: that would trust
+    // the whole X-Forwarded-For chain, letting a caller spoof request.ip to
+    // bypass the per-IP redirect rate limit or poison click analytics
+    // (unique-visitor hashing + geo lookup both key off request.ip).
+    trustProxy: 'loopback',
   });
 
   // Echo the request id on every response (incl. 404/410/error envelopes) so a
@@ -83,21 +92,26 @@ export async function createApp() {
       return reply.status(500).send({ error: 'Internal server error' });
     }
 
+    // Only Fastify's own framework errors (all carry a `FST_ERR_*` code) get
+    // their message and status passed through. A `.statusCode` alone is not
+    // proof of trustworthy origin — any third-party error can bolt one on, and
+    // passing its `.message` straight to the client would bypass the
+    // "unexpected error → generic message" rule. Everything else falls back to
+    // a generic 500.
     const asRecord = error as Record<string, unknown>;
+    const isFastifyError =
+      error instanceof Error && typeof asRecord['code'] === 'string' && asRecord['code'].startsWith('FST_ERR_');
     const statusCode =
-      error instanceof Error &&
-      'statusCode' in error &&
-      typeof asRecord['statusCode'] === 'number'
+      isFastifyError && typeof asRecord['statusCode'] === 'number'
         ? (asRecord['statusCode'] as number)
         : 500;
 
-    if (statusCode >= 500) {
+    if (!isFastifyError || statusCode >= 500) {
       request.log.error({ err: error }, 'Unhandled server error');
       return reply.status(500).send({ error: 'Internal server error' });
     }
 
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    return reply.status(statusCode).send({ error: message });
+    return reply.status(statusCode).send({ error: (error as Error).message });
   });
 
   // ── Routes ──────────────────────────────────────────────────────────────────
