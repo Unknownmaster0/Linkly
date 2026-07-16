@@ -10,10 +10,21 @@ import { getCommonConfig } from '@url-shortener/shared';
 
 const common = getCommonConfig();
 
+// No hardcoded fallback: a guessable default would let anyone who has read this
+// (public) source forge valid access/refresh tokens against any deployment that
+// forgot to set the real secret.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 export const config = {
   ...common,
-  JWT_SECRET:              process.env['JWT_SECRET']              ?? 'default_jwt_secret',
-  JWT_REFRESH_SECRET:      process.env['JWT_REFRESH_SECRET']      ?? 'default_jwt_refresh_secret',
+  JWT_SECRET:              requireEnv('JWT_SECRET'),
+  JWT_REFRESH_SECRET:      requireEnv('JWT_REFRESH_SECRET'),
   BASE_URL:                process.env['BASE_URL']                ?? 'http://localhost:3000',
   REDIRECT_URL:            process.env['REDIRECT_URL']            ?? 'http://localhost:3001',
   // Comma-separated allow-list of browser origins permitted by CORS. Never '*'

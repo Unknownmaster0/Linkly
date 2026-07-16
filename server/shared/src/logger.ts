@@ -66,3 +66,15 @@ const loggerConfigs: Record<NodeEnv, object> = {
 export function getFastifyLoggerConfig(env: string): object {
   return loggerConfigs[env as NodeEnv] ?? { ...sharedPinoOptions, level: 'info' };
 }
+
+// Startup failures (DB/Valkey unreachable, bad config) are caught before the
+// Fastify/pino logger exists, so they go to console.error — outside pino's
+// `redact` above. Some driver errors interpolate the raw connection string
+// (with credentials) into their message, so scrub that shape before it ever
+// reaches stdout/process logs.
+const CONNECTION_STRING_CREDENTIALS = /(:\/\/)[^\s/:@]+:[^\s/:@]+@/g;
+
+export function redactConnectionStrings(err: unknown): string {
+  const text = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+  return text.replace(CONNECTION_STRING_CREDENTIALS, '$1[REDACTED]@');
+}

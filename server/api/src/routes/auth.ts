@@ -1,7 +1,11 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authenticate } from '../middleware/auth.js';
 import { createAuthService } from '../services/auth.service.js';
-import { registerBodySchema, loginBodySchema } from '../schemas/auth.schema.js';
+import {
+  registerBodySchema,
+  loginBodySchema,
+  deleteAccountBodySchema,
+} from '../schemas/auth.schema.js';
 import { successResponse } from '../utils/api-response.js';
 import { config } from '../config.js';
 import { AuthError, ValidationError } from '../utils/errors.js';
@@ -81,6 +85,22 @@ const logoutSchema = {
   response: {
     204: noContentResponse,
     401: errorEnvelope('Not authenticated', { error: 'Unauthorized' }),
+  },
+};
+
+const deleteAccountSchema = {
+  tags: ['Auth'],
+  summary: 'Delete account',
+  description:
+    'Anonymizes the account (email, name, and password are overwritten and the account ' +
+    'is deactivated) and soft-deletes every URL the user owns. Click-event history for ' +
+    'those URLs is preserved, per the soft-delete policy. Requires the current password ' +
+    'plus a valid access token; clears the refresh cookie on success.',
+  security: [{ bearerAuth: [] }],
+  body: zodToJsonSchema(deleteAccountBodySchema),
+  response: {
+    204: noContentResponse,
+    401: errorEnvelope('Invalid password or not authenticated', { error: 'Invalid password' }),
   },
 };
 
@@ -195,6 +215,20 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (tokenValue) {
       await authService.logout(request.userId, tokenValue);
     }
+
+    clearRefreshCookie(reply);
+    return reply.status(204).send();
+  });
+
+  // DELETE /api/auth/account — requires a valid access token + current password
+  app.delete('/account', { preHandler: [authenticate], schema: deleteAccountSchema }, async (request, reply) => {
+    const parsed = deleteAccountBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      throw new ValidationError(issue?.message ?? 'Validation failed', { field: issue?.path[0] });
+    }
+
+    await authService.deleteAccount(request.userId, parsed.data.password);
 
     clearRefreshCookie(reply);
     return reply.status(204).send();

@@ -52,7 +52,8 @@ Copy `.env.example` to `.env` and fill in:
 ```env
 DATABASE_URL=postgresql://admin:secret@localhost:5432/urlshortener
 VALKEY_URL=redis://localhost:6379
-JWT_SECRET=change-me-in-production
+JWT_SECRET=<generate-a-long-random-secret>
+JWT_REFRESH_SECRET=<generate-a-different-long-random-secret>
 BASE_URL=http://localhost:3000
 NODE_ENV=development
 PORT=3000
@@ -63,7 +64,8 @@ DEFAULT_URL_TTL_DAYS=7
 |---|---|---|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `VALKEY_URL` | No | Valkey/Redis URL (defaults to `redis://localhost:6379`) |
-| `JWT_SECRET` | Yes | Secret used to sign/verify JWT access tokens |
+| `JWT_SECRET` | Yes | Secret used to sign/verify JWT access tokens — no default, server refuses to start without it |
+| `JWT_REFRESH_SECRET` | Yes | Secret used to sign/verify JWT refresh tokens — no default, server refuses to start without it |
 | `BASE_URL` | Yes | Public base URL for constructing short links |
 | `NODE_ENV` | No | `development` \| `production` \| `test` |
 | `PORT` | No | Server port (default `3000`) |
@@ -187,7 +189,10 @@ Content-Type: application/json
 
 ---
 
-> Auth routes (`POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`) and analytics routes are planned for upcoming weeks per the execution plan.
+> Auth routes (`POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`,
+> `POST /api/auth/logout`, `DELETE /api/auth/account`) and analytics routes
+> (`GET /api/analytics/:shortCode`, `GET /api/analytics/:shortCode/events`) are implemented —
+> see `../../docs/notes/API_CONTRACT.md` for full request/response shapes.
 
 ## Core Modules
 

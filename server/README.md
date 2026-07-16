@@ -102,7 +102,9 @@ The API server starts on `http://localhost:3000`.
 | `DATABASE_URL` | `postgresql://admin:secret@localhost:5432/urlshortener` | PostgreSQL connection string |
 | `VALKEY_URL` | `redis://localhost:6379` | Valkey/Redis connection string |
 
-> Docker Compose credentials: user `admin`, password `secret`, database `urlshortener`.
+> Docker Compose credentials come from a root-level `.env` (gitignored) — copy
+> `../.env.example` to `../.env` and fill in `POSTGRES_USER` / `POSTGRES_PASSWORD` /
+> `POSTGRES_DB` before running `docker compose up`.
 
 ## Performance Targets
 

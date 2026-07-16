@@ -69,7 +69,6 @@ const eventsData = {
           id: { type: 'string' },
           clickedAt: { type: 'string', format: 'date-time' },
           countryCode: { type: 'string', nullable: true },
-          city: { type: 'string', nullable: true },
           deviceType: { type: 'string' },
           browser: { type: 'string', nullable: true },
           os: { type: 'string', nullable: true },

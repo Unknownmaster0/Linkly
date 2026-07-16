@@ -89,9 +89,15 @@ PostgreSQL and Valkey are started via Docker Compose at the repo root:
 docker compose up -d
 ```
 
-Default credentials (for local development only):
-- PostgreSQL: `postgresql://user:password@localhost:5432/database`
-- Valkey: `redis://localhost:6379`
+Credentials come from a root-level `.env` (gitignored, never committed) — copy
+`.env.example` to `.env` first:
+
+```bash
+cp .env.example .env   # fill in POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+docker compose up -d
+```
+
+Valkey needs no credentials for local development: `redis://localhost:6379`.
 
 ### API Server (`server/api/`)
 
@@ -101,7 +107,8 @@ Create `.env` from `.env.example`:
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | `postgresql://user:password@localhost:5432/database` | PostgreSQL connection string |
 | `VALKEY_URL` | No | `redis://localhost:6379` | Valkey/Redis connection string |
-| `JWT_SECRET` | Yes | — | Secret for signing/verifying JWT access tokens |
+| `JWT_SECRET` | Yes | — | Secret for signing/verifying JWT access tokens. No fallback — server refuses to start without it |
+| `JWT_REFRESH_SECRET` | Yes | — | Secret for signing/verifying JWT refresh tokens. No fallback — server refuses to start without it |
 | `BASE_URL` | Yes | `http://localhost:3000` | Public base URL for constructing short links |
 | `NODE_ENV` | No | `development` | `development` \| `production` \| `test` |
 | `PORT` | No | `3000` | API server port |
@@ -140,6 +147,67 @@ Create `.env` from `.env.example`:
 
 ---
 
+## ⚠️ Secret Rotation Warning
+
+A source-code security pass (2026-07-15) found and removed the following **hardcoded
+fallback secrets**, which had been committed to this repository:
+
+- `server/api/src/config.ts` — `JWT_SECRET` and `JWT_REFRESH_SECRET` silently fell back to
+  the literal strings `'default_jwt_secret'` / `'default_jwt_refresh_secret'` when the
+  corresponding env var was unset.
+- `server/worker/src/config.ts` — `IP_HASH_SECRET` silently fell back to
+  `'dev_ip_hash_secret_change_me'`.
+- `docker-compose.yml` — the local Postgres container's `POSTGRES_USER`/`POSTGRES_PASSWORD`
+  were hardcoded as `admin` / `secret`.
+
+These values are visible in this repo's git history even though the code no longer uses
+them (the services now fail fast at startup instead of silently defaulting). **If any
+deployment ever ran without explicitly setting `JWT_SECRET`, `JWT_REFRESH_SECRET`, or
+`IP_HASH_SECRET`, or if the Postgres container was ever reachable from outside localhost,
+rotate those credentials immediately** — generate new random values (`openssl rand -hex 32`),
+set them via env vars, and redeploy. Rotating `JWT_SECRET`/`JWT_REFRESH_SECRET` invalidates
+all existing sessions, which is expected.
+
+---
+
+## 🔐 Personal Data & Privacy
+
+A personal-data flow audit (2026-07-15) mapped every place the app collects user data and
+where it goes. Summary — full detail in `docs/notes/API_CONTRACT.md` and
+`docs/notes/DECISIONS.md` (#13, #14):
+
+| Data | Collected at | Stored as | Leaves the app? |
+|---|---|---|---|
+| Email, password | Register/login | `users.email` (plain), `users.password_hash` (Argon2id) | No |
+| Refresh token | Login/register/refresh | `refresh_tokens.token_hash` (SHA-256); raw token only ever in an httpOnly, SameSite=Strict cookie | No |
+| Browser User-Agent (account-linked) | Login/register/refresh | `refresh_tokens.user_agent` (raw string) | No |
+| Destination URL, alias | URL creation | `urls.original_url`, `urls.custom_alias` | No |
+| Visitor IP | Every redirect | `click_events.ip_hash` — SHA-256 with a daily-rotating salt; **raw IP is never persisted** | **Yes** — see below |
+| Visitor User-Agent, Referrer | Every redirect | Parsed into `device_type`/`browser`/`os` and `referrer_domain` (hostname only); raw strings discarded | No |
+
+**The one external data flow:** the worker sends the visitor's raw IP to a third-party
+geo-IP service (`ip-api.com`) to resolve a country code, over **plain HTTP** (the free tier
+doesn't support TLS). This is inherent to how geo-IP lookups work and is gated by
+`GEO_ENABLED`/fails open on error — but it's worth knowing this is the only point where raw
+personal data (an IP address) leaves the app's own infrastructure. Only `countryCode` is
+requested/stored as of this audit (previously `city` was also fetched and stored with no
+consumer — removed as unnecessary data collection, see Decision 14).
+
+**Fixed in this audit:**
+- A worker debug log was printing the raw visitor IP (`analytics.job.ts`) — contradicted the
+  codebase's own "raw IP is never logged" guarantee. Removed.
+- `city`-level geo data was requested from and stored via the third party with no feature
+  using it — dropped (`countryCode` only now).
+- A stray `console.log` in the client's links page was dumping full URL list data to the
+  browser console — removed.
+- **Account deletion did not exist.** Added `DELETE /api/auth/account` — anonymizes the
+  account (email/name/password overwritten, deactivated), soft-deletes all owned URLs
+  (click-event history is preserved, same policy as manual URL deletion), and purges the
+  user's refresh tokens (including the stored User-Agent string). Requires the current
+  password. See Decision 13.
+
+---
+
 ## Local Setup and Installation
 
 ### 1. Start Infrastructure Services
@@ -147,6 +215,7 @@ Create `.env` from `.env.example`:
 From the repo root:
 
 ```bash
+cp .env.example .env   # fill in POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
 docker compose up -d
 ```
 
@@ -441,6 +510,7 @@ url-shortener/                     # Monorepo root
 - `POST /api/auth/login` — Authenticate and receive tokens
 - `POST /api/auth/refresh` — Refresh access token
 - `POST /api/auth/logout` — Revoke refresh token
+- `DELETE /api/auth/account` — Anonymize account + soft-delete owned URLs (auth + password required)
 
 ### URL Management Routes
 
@@ -456,7 +526,7 @@ url-shortener/                     # Monorepo root
 
 ### Analytics Routes
 
-- `GET /api/analytics/:shortCode/summary` — Aggregated click analytics (auth required)
+- `GET /api/analytics/:shortCode` — Aggregated click analytics (auth required)
 - `GET /api/analytics/:shortCode/events` — Raw click events (auth required)
 
 ### Health Check

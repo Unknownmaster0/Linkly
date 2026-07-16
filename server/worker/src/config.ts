@@ -10,6 +10,16 @@ import { getCommonConfig } from '@url-shortener/shared';
 
 const common = getCommonConfig();
 
+// No hardcoded fallback: a fixed, publicly-known salt component defeats the
+// point of the daily-rotating IP hash (see IP_HASH_SECRET below).
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 export const config = {
   ...common,
   // Geo enrichment (ip-api.com) — per-request timeout; failures fall back to null.
@@ -23,5 +33,5 @@ export const config = {
   // Secret mixed into the daily IP-hash salt. Plain SHA-256(ip) is reversible
   // (IPv4 space is tiny); a rotating daily salt makes ip_hash non-reversible
   // while keeping same-IP-same-day hashes stable for unique-visitor counting.
-  IP_HASH_SECRET: process.env['IP_HASH_SECRET'] ?? 'dev_ip_hash_secret_change_me',
+  IP_HASH_SECRET: requireEnv('IP_HASH_SECRET'),
 };

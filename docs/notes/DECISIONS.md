@@ -1,7 +1,7 @@
 # Design Decisions — URL Shortener
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-06-16 (added Decision 12 — IST analytics bucketing)  
+**Last Updated:** 2026-07-15 (added Decisions 13-14 — account deletion, geo data minimization)  
 **Audience:** Development team, code reviewers
 
 ---
@@ -22,6 +22,8 @@
 | 10 | Worker Process | Same as HTTP server (initially) | Simpler deployment; one process to manage | Separate process | Shared failure domain | Worker crash could affect HTTP server |
 | 11 | Redirect Server Prisma Schema | Minimal copy (Url fields only) | `redirect/` is an isolated package; can't share `api/`'s schema without `shared/` | Import api's generated client | Schema drift risk until `shared/` is created | Redirect silently queries stale/wrong columns if api renames a field |
 | 12 | Analytics Day Bucketing | IST (`Asia/Kolkata`) via `AT TIME ZONE` in SQL; storage stays UTC | India-facing product — "a day" must mean the IST calendar day, not UTC (5.5h skew); Postgres resolves the boundary, no JS tz math, no stored local time | Bucket by UTC day OR store naive IST `TIMESTAMP` | Must remember `AT TIME ZONE` per tz-sensitive query; salt rotation coupled to the IST boundary | Daily numbers smeared 5.5h across the IST/UTC boundary; or (if storing local) `NOW()`/`expires_at < now` silently off by 5.5h |
+| 13 | Account Deletion | Anonymize `users` row + soft-delete owned `urls`; never hard-delete a user | `urls` → `click_events` cascade off `users` (`onDelete: Cascade`); a hard delete would silently destroy analytics history for every URL the account owned | Hard `DELETE FROM users` | Anonymized row (placeholder email/name) stays in the table forever; `email` unique index holds a dead placeholder value | Hard delete cascades and erases click-event history for URLs the deleted user owned |
+| 14 | Geo Enrichment Data Minimization | Request/store `countryCode` only from the geo-IP provider; never log the raw IP | Country-level is all the locked analytics contract (`GET /api/analytics/:shortCode`) exposes; `city` had no consumer and is materially more identifying per visitor | Also fetch/store `city` (previous behavior) | Slightly less granular geo data available for any future feature | City-level per-click location data sent to & retained from a third party with no product need for it; raw IP logged if debug logging is ever enabled in production |
 
 ---
 
@@ -498,6 +500,79 @@ behaviour unchanged.
 
 **Interview Question This Answers:**
 "Your product is India-facing but you store UTC — how do you make 'daily analytics' mean the IST day without corrupting storage?"
+
+---
+
+### Decision 13: Account Deletion (Anonymize vs Hard Delete)
+
+**Added:** 2026-07-15, as part of a pre-deployment personal-data audit.
+
+**Problem:**
+There was no way for a user to delete their account. The checklist requirement is
+"remove or anonymize all personal data" — but `Url.user` and (transitively)
+`ClickEvent.url` both cascade off `User` (`onDelete: Cascade`), so a naive
+`prisma.user.delete()` would cascade-destroy every URL and all click-event history the
+user ever generated.
+
+**Why Anonymize Wins:**
+
+| Anonymize (chosen) | Hard delete |
+|---|---|
+| ✅ Analytics history survives (same principle as Decision 8) | ❌ Cascades and destroys all owned URLs + click events |
+| ✅ Login becomes permanently impossible (`isActive = false`, password overwritten) | ✅ Row is gone |
+| ❌ A placeholder row (`deleted-<uuid>@deleted.invalid`) stays in `users` forever | ✅ No leftover row |
+
+**Implementation (`auth.repository.ts` → `deleteAccount`, one transaction):**
+1. `users`: `email` → `deleted-<userId>@deleted.invalid`, `name` → `''`, `passwordHash` →
+   random unusable bytes, `isActive` → `false`. **No separate `is_deleted`/`deleted_at`
+   column was added** — `isActive` has exactly one producer in this codebase
+   (`deleteAccount` itself) and exactly one meaning (can this row authenticate?), so a
+   parallel `is_deleted` flag would be pure redundant state. The pre-existing
+   `trg_users_updated_at` DB trigger (schema_augmentation migration) stamps `updatedAt`
+   with `clock_timestamp()` on every `UPDATE` to `users`, including this one, so
+   `updatedAt` already doubles as the deletion timestamp with zero extra code.
+2. `urls`: soft-delete (`is_deleted = true`) every row owned by the user — identical to
+   the existing single-URL soft-delete path.
+3. `refresh_tokens`: hard-delete every row for the user (no retention need — this also
+   purges the account-linked raw User-Agent string, the one piece of account-tied PII
+   that was previously stored unhashed).
+
+**Auth requirement:** the endpoint (`DELETE /api/auth/account`) requires the current
+password in the body, not just a valid access token — an access token alone (15-min,
+stateless, can't be revoked) is not enough authorization for an irreversible action.
+
+**Interview Question This Answers:**
+"How do you let a user delete their account without destroying analytics history for
+other data that references them?"
+
+---
+
+### Decision 14: Geo Enrichment Data Minimization (Country Only, Never Log Raw IP)
+
+**Added:** 2026-07-15, as part of the same audit.
+
+**Problem:**
+The worker's geo-IP lookup (`ip-api.com`) requested and stored `city` alongside
+`countryCode`, even though the entire locked analytics contract only ever surfaces
+country-level data. A debug log line also logged the *raw* input IP next to the geo
+response — directly contradicting this file's own documented guarantee ("the raw IP is
+never stored or logged", `hashIp()` in `analytics.job.ts`).
+
+**Why Country-Only (and No Raw-IP Logging) Wins:**
+
+| Before | After |
+|---|---|
+| `fields=status,countryCode,city` sent to a third party | `fields=status,countryCode` only |
+| `city` stored in `click_events` and returned by `GET /api/analytics/:shortCode/events` | `city` never requested; column stays unpopulated going forward |
+| `logger.debug({ ip, body }, ...)` — raw IP in logs at debug level | `logger.debug({ body }, ...)` — no raw IP anywhere |
+
+**Principle:** don't request, store, or transmit more precision than the product
+actually uses. City-level per-click location is a materially higher privacy risk than
+a country code, and it was being sent to (and stored from) a third party for a feature
+that doesn't exist.
+
+**Interview Question This Answers:**
+"How do you audit a third-party integration for data minimization?"
 
 ---
 

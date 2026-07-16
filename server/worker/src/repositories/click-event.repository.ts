@@ -5,7 +5,6 @@ export type InsertClickData = {
   urlId: bigint;
   ipHash: string;
   countryCode: string | null;
-  city: string | null;
   deviceType: DeviceType;
   browser: string | null;
   os: string | null;

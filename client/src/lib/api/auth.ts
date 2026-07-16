@@ -26,5 +26,16 @@ export function logout(): Promise<void> {
   return apiFetch<void>("/api/auth/logout", { method: "POST" });
 }
 
+/**
+ * `DELETE /api/auth/account` — anonymizes the account and soft-deletes all
+ * owned URLs. Requires the current password. Clears the refresh cookie.
+ */
+export function deleteAccount(password: string): Promise<void> {
+  return apiFetch<void>("/api/auth/account", {
+    method: "DELETE",
+    body: { password },
+  });
+}
+
 /** `POST /api/auth/refresh` — silent, single-flight (see api-client). */
 export const refreshSession = performSilentRefresh;

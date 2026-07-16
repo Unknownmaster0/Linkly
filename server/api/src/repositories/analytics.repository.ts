@@ -122,7 +122,6 @@ export function createAnalyticsRepository(prisma: PrismaClient) {
             id: true,
             clickedAt: true,
             countryCode: true,
-            city: true,
             deviceType: true,
             browser: true,
             os: true,

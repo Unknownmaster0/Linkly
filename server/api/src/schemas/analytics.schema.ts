@@ -50,7 +50,6 @@ export interface AnalyticsEvent {
   id: string;
   clickedAt: string;
   countryCode: string | null;
-  city: string | null;
   deviceType: string;
   browser: string | null;
   os: string | null;

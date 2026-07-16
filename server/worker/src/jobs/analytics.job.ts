@@ -7,7 +7,7 @@ import type { ClickEventRepository } from '../repositories/click-event.repositor
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 
-type Geo = { countryCode: string | null; city: string | null };
+type Geo = { countryCode: string | null };
 type Ua = { deviceType: DeviceType; browser: string | null; os: string | null };
 
 /** IST is a fixed +05:30 offset (no DST), so a constant shift is exact. */
@@ -69,25 +69,28 @@ function parseUserAgent(userAgent: string | undefined): Ua {
  * is still recorded. Logged at debug: expected transient behaviour, not alarming.
  */
 async function lookupGeo(ip: string): Promise<Geo> {
-  if (!config.GEO_ENABLED) return { countryCode: null, city: null };
+  if (!config.GEO_ENABLED) return { countryCode: null };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.GEO_TIMEOUT_MS);
   try {
+    // Only countryCode is requested — that's all the locked analytics contract
+    // needs (city-level precision was fetched previously with no consumer and
+    // is a meaningfully higher privacy risk). Data minimization: don't ask a
+    // third party for more than the product uses.
     const res = await fetch(
-      `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,countryCode,city`,
+      `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,countryCode`,
       { signal: controller.signal }
     );
-    const body = (await res.json()) as { status?: string; countryCode?: string; city?: string };
-    logger.debug({ ip, body }, 'Geo lookup result from ip-api.com');
-    if (body.status !== 'success') return { countryCode: null, city: null };
-    return {
-      countryCode: body.countryCode ?? null,
-      city: body.city ?? null,
-    };
+    const body = (await res.json()) as { status?: string; countryCode?: string };
+    // Never log the raw IP here — logging `ip` alongside the response would
+    // defeat the salted-hash anonymization this file otherwise guarantees.
+    logger.debug({ body }, 'Geo lookup result from ip-api.com');
+    if (body.status !== 'success') return { countryCode: null };
+    return { countryCode: body.countryCode ?? null };
   } catch (err) {
     logger.debug({ err }, 'Geo lookup failed — storing click without geo');
-    return { countryCode: null, city: null };
+    return { countryCode: null };
   } finally {
     clearTimeout(timer);
   }
@@ -135,7 +138,6 @@ export function createClickProcessor(
         urlId,
         ipHash: hashIp(ip),
         countryCode: geo.countryCode,
-        city: geo.city,
         deviceType: ua.deviceType,
         browser: ua.browser,
         os: ua.os,

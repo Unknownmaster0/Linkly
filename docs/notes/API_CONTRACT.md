@@ -247,6 +247,71 @@ Set-Cookie: refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0
 
 ---
 
+### DELETE /api/auth/account
+
+**Purpose:** Permanently anonymize the caller's account and soft-delete all owned URLs
+(added 2026-07-15 — see DECISIONS.md #13)
+
+**Auth Required:** Yes (Bearer token)
+
+**Rate Limited:** No
+
+**Request Schema:**
+
+```json
+{
+  "password": "string — current password, REQUIRED"
+}
+```
+
+**Example Request:**
+```bash
+curl -X DELETE http://localhost:3000/api/auth/account \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -H "Content-Type: application/json" \
+  -d '{ "password": "SecurePass123" }'
+```
+
+**Response 204 (Success):**
+
+```
+(no body)
+```
+
+**Response Headers:**
+```
+Set-Cookie: refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0
+```
+
+**Side Effects:**
+- `users` row is anonymized: `email` → `deleted-<userId>@deleted.invalid`, `name` → `""`,
+  `passwordHash` → a random unusable value, `isActive` → `false` (this is the sole
+  "account deleted" signal — no separate `is_deleted` column; the existing
+  `trg_users_updated_at` DB trigger stamps `updatedAt` with the exact deletion moment).
+- Every URL owned by the user is soft-deleted (`is_deleted = true`) — their click-event
+  history is **not** deleted (same rule as manual URL deletion, DECISIONS.md #8).
+- All of the user's `refresh_tokens` rows are hard-deleted (no retention need; this also
+  erases the account-linked raw User-Agent string stored per session).
+- Refresh cookie cleared. Any still-live access token (≤15 min old) stops working the
+  moment it's used, because subsequent auth-dependent calls re-check `isActive`.
+
+**Error Responses:**
+
+| Status | Scenario | Response |
+|--------|----------|----------|
+| 400 | Missing password | `{ "error": "Password is required", "details": { "field": "password" } }` |
+| 401 | Not authenticated | `{ "error": "Unauthorized" }` |
+| 401 | Wrong password | `{ "error": "Invalid password" }` |
+
+**Notes:**
+- Requires the current password even though the caller already holds a valid access
+  token — defense in depth for a destructive, irreversible action.
+- A hard `DELETE FROM users` is deliberately avoided: `urls` (and transitively
+  `click_events`) cascade off `users`, so a hard delete would destroy analytics history —
+  the same reasoning as the URL-level soft-delete rule.
+
+---
+
 ## URL Management Routes
 
 ### POST /api/urls
@@ -616,6 +681,84 @@ Wrapped in the standard envelope: `{ "success": true, "message": "Analytics retr
 - `referrer` is parsed from HTTP `Referer` header; `direct` for no referrer
 - `countryCode` only populated if geo lookup succeeded; null if failed
 - No pre-aggregation in MVP (queries run on raw Click table)
+
+---
+
+### GET /api/analytics/:shortCode/events
+
+**Purpose:** Paginated raw click events for a short URL (drill-down behind the summary)
+
+**Auth Required:** Yes (Bearer token; ownership verified)
+
+**Rate Limited:** No
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `:shortCode` | string | Short code or custom alias |
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | integer? | 1-100, default 20 |
+| `offset` | integer? | ≥0, default 0 |
+
+**Example Request:**
+```bash
+curl -X GET "http://localhost:3000/api/analytics/gY1k/events?limit=20&offset=0" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**Response 200 (Success):**
+
+Wrapped in the standard envelope. The object below is the `data` payload.
+
+```json
+{
+  "events": [
+    {
+      "id": "482910",
+      "clickedAt": "2026-04-18T12:34:56Z",
+      "countryCode": "IN",
+      "deviceType": "mobile",
+      "browser": "Chrome",
+      "os": "Android",
+      "referrerDomain": "twitter.com"
+    }
+  ],
+  "total": 10500,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+**Field Descriptions:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Internal click-event id, stringified (BigInt) |
+| `clickedAt` | ISO8601 | When the click was recorded |
+| `countryCode` | string \| null | ISO 3166-1 alpha-2, from geo lookup (null if it failed) |
+| `deviceType` | string | `mobile` \| `desktop` \| `tablet` \| `bot` \| `unknown` |
+| `browser` | string \| null | Parsed from User-Agent |
+| `os` | string \| null | Parsed from User-Agent |
+| `referrerDomain` | string \| null | Hostname only (never the full referrer URL) |
+
+**Error Responses:**
+
+| Status | Scenario | Response |
+|--------|----------|----------|
+| 401 | Not authenticated | `{ "error": "Unauthorized" }` |
+| 404 | Short code not found OR doesn't belong to user | `{ "error": "Not found" }` |
+
+**Notes:**
+- Only events within the 90-day retention window are returned.
+- **City-level location is intentionally NOT returned or stored** (removed 2026-07-15
+  in a privacy pass): only `countryCode` is fetched from the geo-IP provider. Raw IP
+  addresses are never returned anywhere — only the SHA-256 (salted, non-reversible)
+  hash is persisted, and that hash itself is never exposed via any API response.
 
 ---
 

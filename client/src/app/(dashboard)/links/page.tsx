@@ -19,7 +19,6 @@ export default function LinksPage() {
   const { data, isLoading, isError, error, refetch } = useUrls();
   const [deleteTarget, setDeleteTarget] = useState<UrlListItem | null>(null);
   const urls = data?.urls ?? [];
-  console.log(urls);
   return (
     <div>
       <PageHeader

@@ -132,6 +132,24 @@ export function createAuthService(prisma: PrismaClient) {
       }
       await repo.revokeRefreshToken(hashToken(tokenValue));
     },
+
+    // Re-verifies the current password (defense in depth beyond the access
+    // token alone) before permanently anonymizing the account. Same generic
+    // message on any failure — an already-deleted account looks identical to
+    // a wrong password, consistent with the no-enumeration rule in login().
+    async deleteAccount(userId: string, password: string): Promise<void> {
+      const user = await repo.findUserById(userId);
+      if (user === null || !user.isActive) {
+        throw new AuthError('Invalid password');
+      }
+
+      const valid = await argon2.verify(user.passwordHash, password);
+      if (!valid) {
+        throw new AuthError('Invalid password');
+      }
+
+      await repo.deleteAccount(userId);
+    },
   };
 }
 

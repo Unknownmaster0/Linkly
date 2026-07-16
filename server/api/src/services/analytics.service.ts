@@ -68,11 +68,10 @@ export function createAnalyticsService(prisma: PrismaClient) {
       const { rows, total } = await repo.listEvents(url.id, limit, offset);
 
       return {
-        events: rows.map((e: { id: bigint; clickedAt: Date; countryCode: string | null; city: string | null; deviceType: string; browser: string | null; os: string | null; referrerDomain: string | null }) => ({
+        events: rows.map((e: { id: bigint; clickedAt: Date; countryCode: string | null; deviceType: string; browser: string | null; os: string | null; referrerDomain: string | null }) => ({
           id: e.id.toString(),
           clickedAt: e.clickedAt.toISOString(),
           countryCode: e.countryCode,
-          city: e.city,
           deviceType: e.deviceType,
           browser: e.browser,
           os: e.os,

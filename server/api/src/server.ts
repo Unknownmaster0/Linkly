@@ -1,6 +1,6 @@
 import { createApp } from './app.js';
 import { config } from './config.js';
-import { registerGracefulShutdown } from '@url-shortener/shared';
+import { registerGracefulShutdown, redactConnectionStrings } from '@url-shortener/shared';
 
 async function start() {
   try {
@@ -21,12 +21,12 @@ async function start() {
       timeoutMs: config.SHUTDOWN_TIMEOUT_MS,
     });
   } catch (err) {
-    console.error('Failed to start server:', err);
+    console.error('Failed to start server:', redactConnectionStrings(err));
     process.exit(1);
   }
 }
 
 start().catch((err) => {
-  console.error('Unhandled error:', err);
+  console.error('Unhandled error:', redactConnectionStrings(err));
   process.exit(1);
 });

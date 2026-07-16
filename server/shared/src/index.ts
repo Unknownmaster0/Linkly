@@ -3,6 +3,7 @@ export type { CommonConfig } from './config.js';
 export {
   getFastifyLoggerConfig,
   genReqId,
+  redactConnectionStrings,
   REQUEST_ID_HEADER,
   REQUEST_ID_LOG_LABEL,
 } from './logger.js';
