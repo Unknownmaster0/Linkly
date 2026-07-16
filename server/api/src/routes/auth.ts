@@ -59,7 +59,8 @@ const loginSchema = {
     'Authenticates a user and returns an access token plus a refreshed ' +
     '`refreshToken` httpOnly cookie. A single generic 401 is used for both ' +
     'unknown email and wrong password (no user enumeration).\n\n' +
-    'Rate limited per IP (see `X-RateLimit-*` response headers).',
+    'Rate limited per IP AND per account (see `X-RateLimit-*` response headers) — ' +
+    'the account-level guard stops credential stuffing spread across many IPs.',
   body: zodToJsonSchema(loginBodySchema),
   response: {
     200: successEnvelope(authResultData, 'Login successful'),
@@ -157,6 +158,22 @@ const loginRateLimit = makeRateLimiter({
   windowSecs: config.RATE_LIMIT_LOGIN_WINDOW_SECS,
 });
 
+// Second guard keyed by the submitted email (not IP): a credential-stuffing
+// attacker spread across many source IPs never trips the per-IP bucket above
+// (each IP gets its own fresh allowance), but every attempt against the SAME
+// account still shares this one. Body is already JSON-parsed by this point in
+// Fastify's lifecycle (parsing runs before preHandler) even though Zod hasn't
+// validated it yet — read defensively and bucket anything malformed together.
+const loginAccountRateLimit = makeRateLimiter({
+  key: (request: FastifyRequest) => {
+    const body = request.body as { email?: unknown } | undefined;
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+    return `rl:login:acct:${email || 'unknown'}`;
+  },
+  limit: config.RATE_LIMIT_LOGIN_ACCOUNT_LIMIT,
+  windowSecs: config.RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SECS,
+});
+
 const registerRateLimit = makeRateLimiter({
   key: (request: FastifyRequest) => `rl:register:${request.ip}`,
   limit: config.RATE_LIMIT_REGISTER_LIMIT,
@@ -189,7 +206,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // POST /api/auth/login
-  app.post('/login', { preHandler: [loginRateLimit], schema: loginSchema }, async (request, reply) => {
+  app.post('/login', { preHandler: [loginRateLimit, loginAccountRateLimit], schema: loginSchema }, async (request, reply) => {
     const parsed = loginBodySchema.safeParse(request.body);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];

@@ -35,12 +35,21 @@ export const config = {
                              .filter((o) => o.length > 0),
   PORT:                    parseInt(process.env['PORT']           ?? '3000', 10),
   DEFAULT_URL_TTL_DAYS:    parseInt(process.env['DEFAULT_URL_TTL_DAYS'] ?? '7', 10),
-  RATE_LIMIT_CREATE_LIMIT: parseInt(process.env['RATE_LIMIT_CREATE_LIMIT'] ?? '10', 10),
-  RATE_LIMIT_WINDOW_SECS:  parseInt(process.env['RATE_LIMIT_WINDOW_SECS']  ?? '60',  10),
+  // 100 URLs/user/hour per API_CONTRACT.md — the contract is locked, so this
+  // config conforms to it (it previously drifted to 10/60s = 600/hour, a 6x
+  // looser ceiling than documented).
+  RATE_LIMIT_CREATE_LIMIT: parseInt(process.env['RATE_LIMIT_CREATE_LIMIT'] ?? '100', 10),
+  RATE_LIMIT_WINDOW_SECS:  parseInt(process.env['RATE_LIMIT_WINDOW_SECS']  ?? '3600', 10),
   // Brute-force / credential-stuffing guards — keyed by IP since the caller
   // isn't authenticated yet at this point.
   RATE_LIMIT_LOGIN_LIMIT:     parseInt(process.env['RATE_LIMIT_LOGIN_LIMIT']     ?? '5', 10),
   RATE_LIMIT_LOGIN_WINDOW_SECS: parseInt(process.env['RATE_LIMIT_LOGIN_WINDOW_SECS'] ?? '60', 10),
+  // Per-ACCOUNT guard (keyed by the submitted email, not IP): closes the gap
+  // where a distributed attacker (many source IPs) can credential-stuff one
+  // victim account without limit, since the per-IP bucket above is scoped to
+  // the attacker's own IP, not the target account.
+  RATE_LIMIT_LOGIN_ACCOUNT_LIMIT:     parseInt(process.env['RATE_LIMIT_LOGIN_ACCOUNT_LIMIT']     ?? '10', 10),
+  RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SECS: parseInt(process.env['RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SECS'] ?? '900', 10),
   RATE_LIMIT_REGISTER_LIMIT:  parseInt(process.env['RATE_LIMIT_REGISTER_LIMIT']  ?? '5', 10),
   RATE_LIMIT_REGISTER_WINDOW_SECS: parseInt(process.env['RATE_LIMIT_REGISTER_WINDOW_SECS'] ?? '60', 10),
 };

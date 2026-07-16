@@ -112,7 +112,8 @@ const deleteUrlSchema = {
 // Routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Per-user limit: 10 creates / 60 s (runs after authenticate sets request.userId).
+// Per-user limit: 100 creates / hour per API_CONTRACT.md (runs after authenticate
+// sets request.userId).
 const shortenRateLimit = makeRateLimiter({
   key: (request: FastifyRequest) => `rl:create:${request.userId}`,
   limit: config.RATE_LIMIT_CREATE_LIMIT,
