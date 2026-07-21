@@ -1,7 +1,7 @@
 # System Flows — Mermaid Diagrams
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-07-16 (added Flow 9 — Delete Account; noted auth rate limiting on Flow 7)  
+**Last Updated:** 2026-07-17 (client-side 401 handling noted on Flow 8; client delete-account + 429 handling noted on Flows 9 and 7)  
 **Purpose:** Visual specification of data flow through the system
 
 ---
@@ -364,6 +364,11 @@ and `POST /api/auth/login` (per IP **and** per submitted email — two independe
 must allow the request). Same fixed-window mechanism, different keys: `rl:register:<ip>`,
 `rl:login:<ip>`, `rl:login:acct:<email>`.
 
+**Client-side (implemented):** a `429` carries `{ error, retryAfter }` in the body (the CORS
+config exposes no headers, so the client reads `retryAfter` from the body, not `Retry-After`).
+The login/register forms surface it as a wait time, e.g. "Too many attempts. Please try again in
+about a minute."
+
 ---
 
 ## Flow 8: Authentication Token Lifecycle
@@ -409,6 +414,13 @@ graph LR
     Q --> R["Clear cookie"]
     R --> S["Next attempt<br/>with old token fails"]
 ```
+
+**Client-side 401 handling (implemented — see DECISIONS.md #17):** the client runs the
+refresh + retry above on *any* 401, then logs out **only if the refresh itself fails**. A 401
+that survives a *successful* refresh is treated as a business error and surfaced (not a logout)
+— this is what lets a wrong password on `DELETE /api/auth/account` show "Invalid password"
+inline instead of bouncing the user to login. `POST /api/auth/login` opts out of this block
+entirely (unauthenticated call), so its 401 = bad credentials surfaces directly.
 
 ---
 
@@ -464,6 +476,13 @@ sequenceDiagram
         note over Server: Never a hard DELETE FROM users —<br/>urls → click_events cascade off users<br/>(onDelete: Cascade) would destroy analytics history (Decision 13)
     end
 ```
+
+**Client-side (implemented):** the profile-menu **"Delete account"** item opens a confirm
+dialog that collects the current password. On `204` the client clears its in-memory access
+token + React Query cache and redirects to `/login` — it does **not** call `/logout` (the
+account is already gone and the cookie is cleared server-side). On `401` it shows "Invalid
+password" inline and keeps the user signed in (DECISIONS.md #17 — that 401 doesn't trigger a
+logout).
 
 ---
 

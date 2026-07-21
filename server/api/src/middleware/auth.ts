@@ -22,7 +22,11 @@ export async function authenticate(request: FastifyRequest): Promise<void> {
   let payload: JwtPayload;
 
   try {
-    payload = jwt.verify(token, config.JWT_SECRET) as JwtPayload;
+    // Pin the expected algorithm. Access tokens are signed with HS256 (jsonwebtoken's
+    // default for a symmetric secret in signAccessToken). Without this pin, verify()
+    // accepts any algorithm the token's own header declares — defense-in-depth against
+    // `alg:none` and algorithm-confusion forgeries.
+    payload = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JwtPayload;
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {
       throw new AuthError('Access token expired');

@@ -137,7 +137,10 @@ export function createAuthService(prisma: PrismaClient) {
     // token alone) before permanently anonymizing the account. Same generic
     // message on any failure — an already-deleted account looks identical to
     // a wrong password, consistent with the no-enumeration rule in login().
-    async deleteAccount(userId: string, password: string): Promise<void> {
+    // Returns the deleted URLs' shortCodes so the route handler can evict
+    // their redirect-cache entries (SEC-001) — Valkey is infrastructure at
+    // the handler's layer, so this service only plumbs the codes through.
+    async deleteAccount(userId: string, password: string): Promise<string[]> {
       const user = await repo.findUserById(userId);
       if (user === null || !user.isActive) {
         throw new AuthError('Invalid password');
@@ -148,7 +151,7 @@ export function createAuthService(prisma: PrismaClient) {
         throw new AuthError('Invalid password');
       }
 
-      await repo.deleteAccount(userId);
+      return repo.deleteAccount(userId);
     },
   };
 }

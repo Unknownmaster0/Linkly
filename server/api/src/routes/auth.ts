@@ -261,7 +261,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
-  // DELETE /api/auth/account — requires a valid access token + current password
+  // DELETE /api/auth/account — requires a valid access token + current password.
+  // Cache eviction lives here, not in the service, mirroring url.ts's single
+  // delete: the service only returns which shortCodes were affected; Valkey is
+  // infrastructure at the handler's layer. Evictions run concurrently (an
+  // owner can have many URLs) and each op already swallows its own errors
+  // (cache.ts), so a Valkey hiccup can't fail the deletion response (SEC-001).
   app.delete('/account', { preHandler: [authenticate], schema: deleteAccountSchema }, async (request, reply) => {
     const parsed = deleteAccountBodySchema.safeParse(request.body);
     if (!parsed.success) {
@@ -269,7 +274,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       throw new ValidationError(issue?.message ?? 'Validation failed', { field: issue?.path[0] });
     }
 
-    await authService.deleteAccount(request.userId, parsed.data.password);
+    const shortCodes = await authService.deleteAccount(request.userId, parsed.data.password);
+
+    await Promise.all(
+      shortCodes.flatMap((code) => [app.cache.del(code), app.cache.setDeleted(code)])
+    );
 
     clearRefreshCookie(reply);
     return reply.status(204).send();

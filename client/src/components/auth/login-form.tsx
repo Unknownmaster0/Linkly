@@ -21,6 +21,7 @@ import { PasswordInput } from "@/components/auth/password-input";
 import { FormError } from "@/components/auth/form-error";
 import { useAuth } from "@/providers/auth-provider";
 import { ApiError } from "@/lib/api-client";
+import { formatRetryAfter } from "@/lib/format";
 import { loginSchema, type LoginValues } from "@/lib/validation";
 import { APP_NAME } from "@/lib/config";
 
@@ -52,11 +53,15 @@ export function LoginForm({ next }: { next?: string }) {
       toast.success("Signed in successfully");
       router.push(safeNext(next));
     } catch (error) {
-      setFormError(
-        error instanceof ApiError
-          ? error.message
-          : "Something went wrong. Please try again.",
-      );
+      if (error instanceof ApiError) {
+        setFormError(
+          error.status === 429
+            ? `Too many attempts. Please try again in ${formatRetryAfter(error.retryAfter ?? 60)}.`
+            : error.message,
+        );
+      } else {
+        setFormError("Something went wrong. Please try again.");
+      }
     }
   }
 

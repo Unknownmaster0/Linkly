@@ -22,6 +22,7 @@ import { PasswordInput } from "@/components/auth/password-input";
 import { FormError } from "@/components/auth/form-error";
 import { useAuth } from "@/providers/auth-provider";
 import { ApiError } from "@/lib/api-client";
+import { formatRetryAfter } from "@/lib/format";
 import { registerSchema, type RegisterValues } from "@/lib/validation";
 import { APP_NAME } from "@/lib/config";
 
@@ -51,8 +52,12 @@ export function RegisterForm() {
       router.push("/dashboard");
     } catch (error) {
       if (error instanceof ApiError) {
-        // Map field-scoped errors (e.g. 409 email already registered) inline.
-        if (error.field === "email" || error.field === "password") {
+        if (error.status === 429) {
+          setFormError(
+            `Too many attempts. Please try again in ${formatRetryAfter(error.retryAfter ?? 60)}.`,
+          );
+        } else if (error.field === "email" || error.field === "password") {
+          // Map field-scoped errors (e.g. 409 email already registered) inline.
           form.setError(error.field, { message: error.message });
         } else {
           setFormError(error.message);

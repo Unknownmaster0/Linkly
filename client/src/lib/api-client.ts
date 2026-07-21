@@ -11,8 +11,11 @@
  *   • unwrap the success envelope (`{ success, message, data }`) → returns `data`;
  *   • map any non-2xx to a typed {@link ApiError} from the `{ error, details?,
  *     retryAfter? }` body (headers aren't read — CORS doesn't expose them);
- *   • on 401, run a SINGLE-FLIGHT silent refresh and retry the request once;
- *     if refresh fails, clear the token and notify the app (→ redirect to login).
+ *   • on 401, run a SINGLE-FLIGHT silent refresh and retry the request once.
+ *     Only a FAILED refresh clears the token + notifies the app (→ login); a 401
+ *     that SURVIVES a successful refresh is a business error (e.g. wrong password
+ *     on account deletion), not an expired session, so it is surfaced as an
+ *     ApiError rather than forcing a logout.
  */
 
 import { API_BASE_URL } from "./config";
@@ -186,13 +189,18 @@ export async function apiFetch<T>(
   opts: FetchOptions = {},
 ): Promise<T> {
   let res = await rawFetch(path, opts);
-
+  
   if (res.status === 401 && opts.auth !== false) {
     const refreshed = await performSilentRefresh();
     if (refreshed) {
-      res = await rawFetch(path, opts); // retry once with the new token
-    }
-    if (res.status === 401) {
+      // Retry once with the fresh token. If it STILL 401s, this is NOT a token
+      // problem — the successful refresh just proved the session is valid — so
+      // it's a business 401 (e.g. a wrong password on DELETE /api/auth/account).
+      // Let it fall through as a normal ApiError instead of forcing a logout.
+      res = await rawFetch(path, opts);
+    } else {
+      // The refresh itself failed → the session is genuinely dead. Clear the
+      // token and notify the app (→ redirect to login).
       setAccessToken(null);
       callbacks.onUnauthorized?.();
     }

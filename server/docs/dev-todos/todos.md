@@ -97,6 +97,21 @@ follow-up this required.
 
 ---
 
+## 2026-07-20 — Adversarial Security Audit (attacker-mindset)
+
+> A full attacker-mindset sweep (all 7 attack paths) was run against `api`, `redirect`,
+> `worker`, and `shared`. Findings live in detail in
+> [`security-audit-2026-07-20.md`](./security-audit-2026-07-20.md) under `[SEC-NNN]` ids, kept
+> **separate** from the `[TODO-NNN]` sequence above (security findings, not standards
+> deviations). Summary: **no CRITICAL/HIGH breach** — 2 fixed same-day (SEC-007 JWT algorithm
+> pin; SEC-001 account-deletion cache eviction, the former top-priority MEDIUM), 4 open +
+> hardening (SEC-002 deactivated-token window, SEC-003 `/docs` in prod, SEC-004 auth
+> rate-limit fail-open, SEC-005 refresh-rotation race), 1 informational (SEC-006). That file
+> carries the attacker scenario, blast radius, `file:line` proof, and fix (applied or proposed)
+> for each.
+
+---
+
 ## How to use this file
 
 - When a TODO is resolved, mark it with the day it was fixed: `[FIXED — Day N]`

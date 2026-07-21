@@ -1,7 +1,9 @@
 # Design Decisions — URL Shortener
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-07-16 (added Decisions 15-16 — trust proxy scope, auth rate limiting)  
+**Last Updated:** 2026-07-20 (Decision 13 addendum — account deletion now evicts the redirect
+cache per SEC-001; added Decision 17 on 2026-07-17 — client 401 handling: logout only on failed
+refresh)  
 **Audience:** Development team, code reviewers
 
 ---
@@ -26,6 +28,7 @@
 | 14 | Geo Enrichment Data Minimization | Request/store `countryCode` only from the geo-IP provider; never log the raw IP | Country-level is all the locked analytics contract (`GET /api/analytics/:shortCode`) exposes; `city` had no consumer and is materially more identifying per visitor | Also fetch/store `city` (previous behavior) | Slightly less granular geo data available for any future feature | City-level per-click location data sent to & retained from a third party with no product need for it; raw IP logged if debug logging is ever enabled in production |
 | 15 | Trust Proxy Scope | `trustProxy: 'loopback'` on both `api` and `redirect` | Same-host nginx reverse proxy; must read the real client IP for rate limiting + analytics without trusting a spoofable header | `trustProxy: true` (trusts the whole X-Forwarded-For chain) OR unset (trusts nothing, always sees the proxy's own IP) | Coupled to the nginx-same-host topology; must be revisited if a different/multi-hop proxy is introduced | `true` → any caller spoofs `request.ip` via a forged header, bypassing per-IP rate limits and poisoning click analytics; unset → every request looks like it came from `127.0.0.1`, collapsing all per-IP limits into one shared bucket |
 | 16 | Auth Rate Limiting | Per-IP (register + login) **and** per-account (login only) | Per-IP alone doesn't stop a distributed attacker (many source IPs) credential-stuffing one victim account | Account lockout (lets an attacker DoS a victim by deliberately failing their login) OR CAPTCHA (deferred — extra dependency + UX friction) | The per-account bucket is keyed off the request body before Zod validates it, so malformed/missing emails share one fallback bucket | Per-IP-only → distributed credential stuffing against a single account is unbounded; no rate limiting at all → registration/login are trivially abusable for mass signup or brute force |
+| 17 | Client 401 Handling | Silent refresh + retry once; log out **only** if the refresh itself fails — a 401 that survives a *successful* refresh is surfaced as an error, not a logout | `DELETE /api/auth/account` returns 401 on a wrong password (Decision 13); a refresh that just succeeded proves the session is valid, so that 401 is a business error, not token expiry | Treat every 401 as session-expiry (log out after the retry) OR string-match the error body to detect "wrong password" | A wrong-password attempt still spends one silent-refresh round-trip before the error surfaces | Wrong password on account-deletion (or any future re-auth endpoint) silently logs the user out instead of showing "Invalid password" |
 
 ---
 
@@ -543,6 +546,10 @@ user ever generated.
 3. `refresh_tokens`: hard-delete every row for the user (no retention need — this also
    purges the account-linked raw User-Agent string, the one piece of account-tied PII
    that was previously stored unhashed).
+4. Redirect cache: evict every owned short code the same way the single-URL delete path
+   does (Decision 9) — `url:<code>` deleted, `DELETED:<code>` negative-cache marker set
+   (30s TTL). Added 2026-07-20 (**Addendum**, below) — the original 2026-07-15
+   implementation omitted this step.
 
 **Auth requirement:** the endpoint (`DELETE /api/auth/account`) requires the current
 password in the body, not just a valid access token — an access token alone (15-min,
@@ -551,6 +558,20 @@ stateless, can't be revoked) is not enough authorization for an irreversible act
 **Interview Question This Answers:**
 "How do you let a user delete their account without destroying analytics history for
 other data that references them?"
+
+**Addendum (2026-07-20 — SEC-001):** the original transaction returned `void`, so no short
+codes ever surfaced for the route handler to evict from Valkey — deleted accounts' previously-
+cached links kept resolving for up to the cache TTL (24h). Fixed by having `deleteAccount`
+`select` the affected `shortCode`s (as the first statement in the same `$transaction`, so it
+captures the same rows under normal operation — a residual same-user race under the default
+Read Committed isolation is harmless, see the security-audit doc) and return them; the route
+handler evicts
+all of them concurrently via `Promise.all`, mirroring Decision 9's single-URL cache eviction
+per code. An async BullMQ-job alternative was considered and rejected — it doesn't avoid the
+same repository read, and would have added a new queue, a new `api` queue producer, a new
+Valkey client in `worker` (which has none today), and a new silent-failure mode, for an
+endpoint that is rare and already not on the hot path. See `server/docs/dev-todos/security-
+audit-2026-07-20.md` (SEC-001) for the full writeup.
 
 ---
 
@@ -665,6 +686,63 @@ bucket — acceptable, since that request fails Zod validation immediately after
 **Interview Question This Answers:**
 "You rate-limit login by IP — an attacker still gets through with a botnet. What closes that
 gap, and why not just lock the account after N failures?"
+
+---
+
+### Decision 17: Client 401 Handling (Logout Only on Failed Refresh)
+
+**Added:** 2026-07-17, when wiring the frontend delete-account UI to `DELETE /api/auth/account`.
+
+**Problem:**
+The client fetch wrapper (`client/src/lib/api-client.ts`) treats a `401` as "the 15-minute
+access token expired": it runs a single-flight silent refresh, retries the request once, and —
+if it is *still* 401 — clears the token and logs the user out. That assumption breaks for
+`DELETE /api/auth/account`, which returns `401 { error: "Invalid password" }` when the
+re-verification password is wrong (Decision 13 requires the password, not just a valid access
+token). A mistyped password would therefore refresh → retry → still-401 → **force a logout**
+instead of showing "Invalid password". `POST /api/auth/login` sidesteps this by being an
+*unauthenticated* call (`auth: false`, which skips the whole refresh/logout block), but a
+delete needs the Bearer token, so it can't use that escape hatch.
+
+**Why "logout only on failed refresh" Wins:**
+
+| Treat every 401 as session-expiry (old) | Match the error-body string | **Logout only if the refresh fails (chosen)** |
+|---|---|---|
+| ❌ Wrong password on delete → surprise logout | ✅ Precise | ✅ No surprise logout |
+| ✅ Simple | ❌ Brittle — couples client to server copy; a reword silently reintroduces the bug | ✅ No string matching |
+| | ❌ Must parse the envelope before deciding | ✅ Uses the refresh *outcome* — the one reliable signal |
+
+**The insight:** a 401 that **survives a successful refresh** cannot be a token problem — the
+successful refresh just proved the session is valid — so it must be a business 401. Only a
+*failed* refresh means the session is genuinely dead.
+
+**Implementation (`api-client.ts` → `apiFetch`):**
+```ts
+if (res.status === 401 && opts.auth !== false) {
+  const refreshed = await performSilentRefresh();
+  if (refreshed) {
+    res = await rawFetch(path, opts);   // retry once; a lingering 401 falls through as ApiError
+  } else {
+    setAccessToken(null);               // refresh failed → session dead → log out
+    callbacks.onUnauthorized?.();
+  }
+}
+```
+The delete-account dialog renders the surfaced `ApiError` ("Invalid password") inline and keeps
+the user signed in. The rule generalizes to any future re-auth endpoint (change-password,
+re-authentication before a sensitive action).
+
+**Trade-off Accepted:**
+A wrong-password attempt still spends one silent-refresh round-trip before the error surfaces
+(harmless — wrong passwords are rare and the auth endpoints are rate limited, Decision 16). For
+a *normal* endpoint, a 401 that survives a successful refresh (anomalous — clock skew, key
+mismatch) now surfaces as an error rather than a logout; a genuinely dead session still logs out
+on the next *failed* refresh.
+
+**Interview Question This Answers:**
+"Your client auto-refreshes on 401 and logs out if the retry still 401s. What breaks when an
+authenticated endpoint returns 401 for a wrong password, and how do you fix it without
+string-matching the error message?"
 
 ---
 

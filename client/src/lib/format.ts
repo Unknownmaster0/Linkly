@@ -70,3 +70,15 @@ export function prettyUrl(raw: string): string {
     return raw;
   }
 }
+
+/**
+ * Human wait time for a 429 `retryAfter` (seconds) — e.g. "45 seconds",
+ * "about a minute", "about 15 minutes". Rounds up so we never invite a retry
+ * before the rate-limit window has actually elapsed.
+ */
+export function formatRetryAfter(seconds: number): string {
+  const secs = Math.max(1, Math.ceil(seconds));
+  if (secs < 60) return `${secs} second${secs === 1 ? "" : "s"}`;
+  const minutes = Math.ceil(secs / 60);
+  return minutes === 1 ? "about a minute" : `about ${minutes} minutes`;
+}

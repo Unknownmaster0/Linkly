@@ -299,6 +299,9 @@ Set-Cookie: refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0
   `trg_users_updated_at` DB trigger stamps `updatedAt` with the exact deletion moment).
 - Every URL owned by the user is soft-deleted (`is_deleted = true`) — their click-event
   history is **not** deleted (same rule as manual URL deletion, DECISIONS.md #8).
+- For every owned URL: Valkey cache key `url:<code>` deleted, and a negative cache entry
+  `DELETED:<code>` (30s TTL) is set — identical to the single-URL delete side effects above,
+  applied per short code the account owned (DECISIONS.md #9; SEC-001).
 - All of the user's `refresh_tokens` rows are hard-deleted (no retention need; this also
   erases the account-linked raw User-Agent string stored per session).
 - Refresh cookie cleared. Any still-live access token (≤15 min old) stops working the

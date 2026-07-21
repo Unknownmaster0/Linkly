@@ -73,8 +73,22 @@ export function createAuthRepository(prisma: PrismaClient) {
     // including the account-linked raw user-agent string). The trg_users_
     // updated_at DB trigger (schema_augmentation migration) stamps updatedAt
     // with the exact moment of this UPDATE, so it doubles as the deletion time.
-    async deleteAccount(userId: string): Promise<void> {
-      await prisma.$transaction([
+    // Also selects the shortCodes being soft-deleted, as the first statement
+    // in the SAME transaction as the updateMany below (so it captures the
+    // same rows under normal operation), and returns them so the route
+    // handler can evict their redirect-cache entries — mirrors
+    // url.repository.ts's single-delete path, which returns the affected
+    // shortCode for the same reason (SEC-001). Residual: under the default
+    // Read Committed isolation, a URL this same user creates in the instant
+    // between these two statements would still be soft-deleted but wouldn't
+    // appear in this return value — harmless, since a URL that young has
+    // never been redirected and so has no cache entry to evict.
+    async deleteAccount(userId: string): Promise<string[]> {
+      const [urlsToEvict] = await prisma.$transaction([
+        prisma.url.findMany({
+          where: { userId, isDeleted: false },
+          select: { shortCode: true },
+        }),
         prisma.user.update({
           where: { id: userId },
           data: {
@@ -90,6 +104,8 @@ export function createAuthRepository(prisma: PrismaClient) {
         }),
         prisma.refreshToken.deleteMany({ where: { userId } }),
       ]);
+
+      return urlsToEvict.map((url) => url.shortCode);
     },
   };
 }

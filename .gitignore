@@ -3,7 +3,7 @@ node_modules/
 .env
 
 plan/
-docs/
+# docs/
 
 .claude/
 **/.claude/
@@ -19,3 +19,5 @@ CLAUDE.md
 **/CLAUDE.md
 AGENTS.md
 **/AGENTS.md
+
+.playwright-mcp/

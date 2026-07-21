@@ -25,6 +25,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
+  deleteAccount: (password: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -89,8 +90,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push("/login");
   }, [queryClient, router]);
 
+  // Permanently deletes the account: the server anonymizes it, soft-deletes all
+  // owned URLs, and clears the refresh cookie. Requires the current password —
+  // a wrong one throws an ApiError the caller surfaces (the api-client no longer
+  // treats that 401 as an expired session, so it won't force a logout). We do
+  // NOT call authApi.logout here: the account is already gone and the cookie is
+  // cleared, so we just tear down the local session and redirect.
+  const deleteAccount = useCallback(
+    async (password: string) => {
+      await authApi.deleteAccount(password);
+      setAccessToken(null);
+      setUser(null);
+      setStatus("unauthenticated");
+      queryClient.clear();
+      router.push("/login");
+    },
+    [queryClient, router],
+  );
+
   return (
-    <AuthContext.Provider value={{ user, status, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, status, login, register, logout, deleteAccount }}
+    >
       {children}
     </AuthContext.Provider>
   );
