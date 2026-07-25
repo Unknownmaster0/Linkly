@@ -194,7 +194,17 @@ echo "→ Installing server dependencies..."
 echo "✓ Server dependencies installed"
 echo "ℹ Client dependencies skipped (Vercel)"
 
-# ── STEP 8: Build ─────────────────────────────────────────────────────────────
+# ── STEP 8: Generate Prisma clients (required before TypeScript build) ────────
+# api, redirect, and worker all import from the generated client
+# (src/generated/prisma/). tsc cannot find the module until this runs.
+
+echo "→ Generating Prisma clients..."
+(cd "$NEW_DIR/server/api"      && npx prisma generate)
+(cd "$NEW_DIR/server/redirect" && npx prisma generate)
+(cd "$NEW_DIR/server/worker"   && npx prisma generate)
+echo "✓ Prisma clients generated"
+
+# ── STEP 9: Build ─────────────────────────────────────────────────────────────
 
 echo "→ Building services..."
 if ! (cd "$NEW_DIR/server" && npm run build:shared && npm run build:api && npm run build:redirect && npm run build:worker); then
@@ -205,12 +215,7 @@ fi
 echo "✓ All services built"
 echo "ℹ Client build skipped (Vercel)"
 
-# ── STEP 9: Prisma ────────────────────────────────────────────────────────────
-
-echo "→ Generating Prisma clients..."
-(cd "$NEW_DIR/server/api"      && npx prisma generate)
-(cd "$NEW_DIR/server/redirect" && npx prisma generate)
-(cd "$NEW_DIR/server/worker"   && npx prisma generate)
+# ── STEP 10: Run migrations ───────────────────────────────────────────────────
 
 echo "→ Running migrations..."
 if ! (cd "$NEW_DIR/server/api" && DATABASE_URL="$DATABASE_URL" npx prisma migrate deploy); then
@@ -218,9 +223,9 @@ if ! (cd "$NEW_DIR/server/api" && DATABASE_URL="$DATABASE_URL" npx prisma migrat
   echo "ERROR: Migration failed. DB state unknown — do NOT proceed. Cleaned up ${NEW_DIR}."
   exit 1
 fi
-echo "✓ Prisma clients generated, migrations applied"
+echo "✓ Migrations applied"
 
-# ── STEP 10: Generate ecosystem.config.cjs ────────────────────────────────────
+# ── STEP 11: Generate ecosystem.config.cjs ────────────────────────────────────
 
 mkdir -p "$APP_DIR/logs" 2>/dev/null || true
 mkdir -p "$NEW_DIR/logs"
@@ -230,7 +235,7 @@ sed "s|APP_DIR_PLACEHOLDER|${APP_DIR}|g" \
   > "$NEW_DIR/ecosystem.config.cjs"
 echo "✓ ecosystem.config.cjs written"
 
-# ── STEP 11: Nginx config test ────────────────────────────────────────────────
+# ── STEP 12: Nginx config test ────────────────────────────────────────────────
 
 if ! sudo nginx -t; then
   echo "ERROR: Nginx config invalid — aborting. Live server is still running."
@@ -238,18 +243,18 @@ if ! sudo nginx -t; then
 fi
 echo "✓ Nginx config valid"
 
-# ── STEP 12: Stop PM2 ─────────────────────────────────────────────────────────
+# ── STEP 13: Stop PM2 ─────────────────────────────────────────────────────────
 
 pm2 stop all || true
 echo "✓ PM2 processes stopped"
 
-# ── STEP 13: Blue-green swap ──────────────────────────────────────────────────
+# ── STEP 14: Blue-green swap ──────────────────────────────────────────────────
 
 mv "$APP_DIR" "$OLD_DIR"
 mv "$NEW_DIR" "$APP_DIR"
 echo "✓ Swap complete: url-shortener-new → url-shortener, url-shortener → url-shortener-old"
 
-# ── STEP 14: Start PM2 on new code ───────────────────────────────────────────
+# ── STEP 15: Start PM2 on new code ───────────────────────────────────────────
 
 cd "$APP_DIR"
 pm2 start ecosystem.config.cjs
@@ -271,7 +276,7 @@ _health_check() {
   return 1
 }
 
-# ── STEP 15: Health check ─────────────────────────────────────────────────────
+# ── STEP 16: Health check ─────────────────────────────────────────────────────
 
 if _health_check; then
   # ── STEP 17: Post-deploy cleanup and nginx reload ─────────────────────────
@@ -289,7 +294,7 @@ if _health_check; then
   exit 0
 fi
 
-# ── STEP 16: Auto-rollback ────────────────────────────────────────────────────
+# ── STEP 18: Auto-rollback ────────────────────────────────────────────────────
 
 echo "✗ Health check failed — initiating auto-rollback..."
 pm2 stop all || true

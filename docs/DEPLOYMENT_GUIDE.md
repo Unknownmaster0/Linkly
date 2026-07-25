@@ -186,10 +186,11 @@ volumes:
 
 ### 1.8 Create `~/deploy.env`
 
-Copy the template from the repo and fill in every value:
+Copy the template and `deploy.sh` from the repo, then fill in every value:
 
 ```bash
-scp infra/deploy.env.example ec2-user@<host>:~/deploy.env
+scp -i secret.pem infra/deploy.env.example ec2-user@<host>:~/deploy.env
+scp -i secret.pem infra/deploy.sh ec2-user@<host>:~/
 ssh ec2-user@<host>
 chmod 600 ~/deploy.env
 nano ~/deploy.env
@@ -222,10 +223,10 @@ Optional variables have defaults in `deploy.sh` — see `infra/deploy.env.exampl
 After one-time setup is done, every deploy (first and subsequent) is a single command:
 
 ```bash
-ssh ec2-user@<host> "bash ~/url-shortener/infra/deploy.sh"
+bash ~/deploy.sh
 ```
 
-Or from the server directly:
+Or, if you prefer to run it from the cloned repo location:
 
 ```bash
 bash ~/url-shortener/infra/deploy.sh
@@ -240,22 +241,25 @@ bash ~/url-shortener/infra/deploy.sh
 5. Writes `~/infra/.env` for Docker Compose
 6. `docker compose up -d` — starts/updates PostgreSQL and Valkey
 7. `npm ci` in `server/`
-8. Builds: `shared` → `api` → `redirect` → `worker` (in that order)
-9. `prisma generate` in all three server packages, then `prisma migrate deploy` from `server/api` only
-10. Generates `ecosystem.config.cjs` by substituting `APP_DIR_PLACEHOLDER` with the real path
-11. `sudo nginx -t` — aborts if Nginx config is invalid (live server stays up)
-12. `pm2 stop all`
-13. Blue-green swap: `url-shortener/` → `url-shortener-old/`, `url-shortener-new/` → `url-shortener/`
-14. `pm2 start ecosystem.config.cjs && pm2 save`
-15. Health check: `GET ${BASE_URL}/health` — retries `HEALTH_CHECK_RETRIES` times with `HEALTH_CHECK_INTERVAL_SECS` delay
-16. On health check pass: `sudo systemctl reload nginx` → done
-17. On health check fail: auto-rollback (see Part 3)
+8. `prisma generate` in all three server packages — **must run before the TypeScript build** because `api`, `redirect`, and `worker` all import from the generated client (`src/generated/prisma/`); without this step `tsc` cannot find the module and the build fails
+9. Builds: `shared` → `api` → `redirect` → `worker` (in that order)
+10. `prisma migrate deploy` from `server/api` only — applies any pending schema migrations against the live database
+11. Generates `ecosystem.config.cjs` by substituting `APP_DIR_PLACEHOLDER` with the real path
+12. `sudo nginx -t` — aborts if Nginx config is invalid (live server stays up)
+13. `pm2 stop all`
+14. Blue-green swap: `url-shortener/` → `url-shortener-old/`, `url-shortener-new/` → `url-shortener/`
+15. `pm2 start ecosystem.config.cjs && pm2 save`
+16. Health check: `GET ${BASE_URL}/health` — retries `HEALTH_CHECK_RETRIES` times with `HEALTH_CHECK_INTERVAL_SECS` delay
+17. On health check pass: `sudo systemctl reload nginx` → done
+18. On health check fail: auto-rollback (see Part 3)
 
 ### Filesystem at Steady State
 
 ```
 /home/ec2-user/
+├── deploy.sh                   ← standalone entry point, kept fresh by deploy.sh
 ├── deploy.env                  ← secrets (chmod 600, never committed)
+├── deploy.env.example          ← reference template, safe to keep
 ├── infra/
 │   ├── docker-compose.yml      ← maintained manually on EC2
 │   └── .env                    ← written by deploy.sh on every deploy
@@ -384,6 +388,7 @@ Common causes:
 - TypeScript errors introduced in the new commit
 - `@url-shortener/shared` not built before `api`/`redirect`/`worker` — the build scripts in `server/package.json` must run `build:shared` first
 - Missing `node_modules` — `npm ci` failed silently (check for npm registry errors above the build output)
+- Prisma client not generated before the build — if reproducing manually, run `npx prisma generate` inside each of `server/api`, `server/redirect`, and `server/worker` before running the build commands (Step 8 in the automated script handles this)
 
 ---
 
