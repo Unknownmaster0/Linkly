@@ -231,7 +231,7 @@ mkdir -p "$APP_DIR/logs" 2>/dev/null || true
 mkdir -p "$NEW_DIR/logs"
 
 sed "s|APP_DIR_PLACEHOLDER|${APP_DIR}|g" \
-  "$(dirname "$0")/ecosystem.config.cjs" \
+  "$NEW_DIR/infra/ecosystem.config.cjs" \
   > "$NEW_DIR/ecosystem.config.cjs"
 echo "✓ ecosystem.config.cjs written"
 
