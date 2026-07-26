@@ -77,7 +77,7 @@ function ShortenPreview() {
               <Link2 className="size-4" />
             </span>
             <span className="truncate font-mono text-sm font-medium">
-              lnk.ly/launch-2026
+              redirect.linkly.sagarsingh.devz.in/launch-2026
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-3">
