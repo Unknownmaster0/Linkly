@@ -85,7 +85,7 @@ This tells you:
 **Why it exists:** Users need to own their URLs, manage them, and access their analytics. Without auth, any URL can be deleted or claimed by anyone.
 
 **Trade-offs:**
-- **JWT vs. Session:** For a stateless API with mobile clients and potential microservices architecture, JWT is the right default. But use short-lived access tokens (15 minutes) + refresh tokens stored in the database (not just signed — stored, so they can be revoked). Pure stateless JWT with no revocation is a security liability.
+- **JWT vs. Session:** For a stateless API with mobile clients and potential microservices architecture, JWT is the right default. But use short-lived access tokens (10 minutes) + refresh tokens stored in the database (not just signed — stored, so they can be revoked). Pure stateless JWT with no revocation is a security liability.
 
 ---
 
@@ -157,7 +157,7 @@ Response 201:
 {
   userId: uuid,
   email: string,
-  accessToken: string (JWT, 15min expiry),
+  accessToken: string (JWT, 10min expiry),
   refreshToken: string (opaque token, 30 days)
 }
 

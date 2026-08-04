@@ -1,9 +1,10 @@
 # Design Decisions — URL Shortener
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-07-20 (Decision 13 addendum — account deletion now evicts the redirect
-cache per SEC-001; added Decision 17 on 2026-07-17 — client 401 handling: logout only on failed
-refresh)  
+**Last Updated:** 2026-08-04 (Decisions 18–26 added — system hardening: access-token
+revocation via jti denylist, access-token TTL 15m→10m, refresh-token reuse detection,
+click-event + duplicate-URL idempotency, 405-vs-404, tiered timeouts, keyset pagination,
+deferred 304; Decision 5 amended to correct its revocation claim)  
 **Audience:** Development team, code reviewers
 
 ---
@@ -16,7 +17,7 @@ refresh)
 | 2 | Counter Strategy | PostgreSQL SEQUENCE | Atomic, lock-free, proven at scale | In-process counter OR Valkey INCR | Ties to PostgreSQL; more complex than simple increment | Race conditions → duplicate short codes (showstopper) |
 | 3 | Cache Strategy | Write-through (create) + Cache-aside (first miss) | Immediate availability + memory efficiency | Write-through only OR Cache-aside only | Some URLs cached but never clicked; or first redirect slow | OOM on unchecked cache OR p99 latency > 100ms |
 | 4 | Analytics Write | Async BullMQ worker | Redirect latency ≤ 2ms; enables geo enrichment | Sync DB insert in request | Adds queue, worker, retry complexity | Redirect latency 5-50ms; breaks at 100M URLs/day |
-| 5 | Token Model | Access (15m) + Refresh (30d in DB) | Revocation possible; theft window limited | Single long-lived JWT | Slightly more complex; refresh endpoint needed | Can't logout users; stolen token valid 30 days |
+| 5 | Token Model | Access (10m) + Refresh (30d in DB) | Revocation possible (refresh via DB; access via jti denylist, Decision 18); theft window limited | Single long-lived JWT | Slightly more complex; refresh endpoint needed | Can't logout users; stolen token valid 30 days |
 | 6 | Rate Limiter | Valkey + Lua script (atomic) | Works across instances; no race conditions | In-process token bucket | Valkey dependency; slight latency | Abuse under concurrent load; duplicate requests allowed |
 | 7 | Ownership Checks | Return 404 for all failures | Prevent enumeration attacks; no information leak | Return 403 for unauthorized | Slightly confusing error semantics | Attackers enumerate valid short codes |
 | 8 | Soft Delete | is_deleted flag instead of hard delete | Preserves analytics history | Hard delete | One more row per URL; one extra WHERE clause | Analytics orphaned when URL deleted |
@@ -29,6 +30,15 @@ refresh)
 | 15 | Trust Proxy Scope | `trustProxy: 'loopback'` on both `api` and `redirect` | Same-host nginx reverse proxy; must read the real client IP for rate limiting + analytics without trusting a spoofable header | `trustProxy: true` (trusts the whole X-Forwarded-For chain) OR unset (trusts nothing, always sees the proxy's own IP) | Coupled to the nginx-same-host topology; must be revisited if a different/multi-hop proxy is introduced | `true` → any caller spoofs `request.ip` via a forged header, bypassing per-IP rate limits and poisoning click analytics; unset → every request looks like it came from `127.0.0.1`, collapsing all per-IP limits into one shared bucket |
 | 16 | Auth Rate Limiting | Per-IP (register + login) **and** per-account (login only) | Per-IP alone doesn't stop a distributed attacker (many source IPs) credential-stuffing one victim account | Account lockout (lets an attacker DoS a victim by deliberately failing their login) OR CAPTCHA (deferred — extra dependency + UX friction) | The per-account bucket is keyed off the request body before Zod validates it, so malformed/missing emails share one fallback bucket | Per-IP-only → distributed credential stuffing against a single account is unbounded; no rate limiting at all → registration/login are trivially abusable for mass signup or brute force |
 | 17 | Client 401 Handling | Silent refresh + retry once; log out **only** if the refresh itself fails — a 401 that survives a *successful* refresh is surfaced as an error, not a logout | `DELETE /api/auth/account` returns 401 on a wrong password (Decision 13); a refresh that just succeeded proves the session is valid, so that 401 is a business error, not token expiry | Treat every 401 as session-expiry (log out after the retry) OR string-match the error body to detect "wrong password" | A wrong-password attempt still spends one silent-refresh round-trip before the error surfaces | Wrong password on account-deletion (or any future re-auth endpoint) silently logs the user out instead of showing "Invalid password" |
+| 18 | Access-Token Revocation | Add a `jti` claim to the access JWT; logout/account-delete writes `revoked:jti:<jti>` in Valkey with TTL = the token's remaining life; `authenticate()` does a fail-open Valkey lookup | Closes the real logout/delete gap — a stateless access token can finally be killed before expiry (security audit SEC-002); stays stateless otherwise | Server-side sessions / token-version `sid` claim (authoritative even when Valkey is down, but every request becomes a session read) | Fail-open by design: during a Valkey outage a revoked token works for ≤ its remaining TTL (bounded, documented degradation); one extra cache read per authenticated request | Logout leaves the access token valid until expiry (a ≤10-min post-logout / post-delete access window) |
+| 19 | Access-Token Lifetime | 10 minutes (was 15) | Smaller theft window; every denylist TTL shortens with it; the silent-refresh client (Decision 17) already masks the cost | 15 minutes (status quo) | One more refresh round-trip per actively-used session | 15-min window = longer post-logout / post-delete access-token validity |
+| 20 | Refresh-Token Reuse Detection | Presenting a *known-but-revoked* refresh token at `/refresh` revokes **every** active refresh token for that user | A stolen rotated token's whole family is killed; the detection is one branch — Decision 5's "detect suspicious patterns" finally implemented | Ignore reuse (status quo) | A legitimate double-submit refresh also wipes sessions → user re-logs-in | One chain of a rotated/stolen token keeps issuing fresh access tokens for up to 30 days |
+| 21 | Click-Event Idempotency | Mint `clickId` (uuid) once in the redirect handler → BullMQ `jobId = clickId` → unique `click_id` index + insert with `ON CONFLICT DO NOTHING` | Closes all three duplicate paths (browser/CDN retry of the 302, BullMQ re-delivery after crash/stall, backoff retry) with the DB as the final authority | Composite unique `(ip_hash, url_id, clicked_at)` (over-collapses legitimate same-IP same-second clicks) | One uuid mint + one unique-index insert per click; migration must backfill existing rows | Retried redirects inflate click counts → misleading analytics |
+| 22 | Duplicate-URL Dedup | Partial unique index `(user_id, original_url) WHERE is_deleted = false`; P2002 → 409 | A double-click / network-retry "Create" yields one link deterministically; no header protocol needed | Idempotency-Key header preHandler (deferred — extra moving part) | After soft-delete the pair frees → the same URL can be re-shortened (intended) | A retried create produces two identical links |
+| 23 | Wrong-Method Responses | `setNotFoundHandler({ methodNotAllowed: true })` on `api` + `redirect`: 405 + `Allow` header when a route exists at the path (Fastify sets `request.routerMethod`), else 404 — both through the contract envelope | RFC 9110-correct; REST clients depend on 405 + `Allow`; the route table is already public via Swagger, so hiding methods buys nothing | 404-everything (status quo — Fastify's default) | Two branches instead of one; must not blur into Decision 7's ownership-404 | Wrong-method requests return a non-contract `{message, error, statusCode}` 404 with no `Allow` header |
+| 24 | Timeout Strategy | Tiered budget — nginx `proxy_*_timeout` (edge backstop) → Fastify `requestTimeout` + Node `keepAliveTimeout`/`requestTimeout` (app owns the 504 envelope) → outbound HTTP via `AbortSignal.timeout()` → Prisma `queryTimeout` + `transactionOptions.maxWait`/`timeout` → BullMQ job `timeout` + Worker `lockDuration` | Each layer handles its own failure domain; the app, not nginx's passive 60s default, is always the one producing 504 | A single global timeout | More knobs to tune and keep consistent | Slow DB queries hang until nginx 504s the client; stalled worker jobs never get killed/retried |
+| 25 | URL List Pagination | Keyset/cursor on `(createdAt, id)` + `limit`/`hasMore`/`nextCursor`; filters `dateFrom`/`dateTo`/`q`/`sortBy`/`sortOrder` (whitelist) | O(1)-ish per page at any depth — no deep-scan cost at 100k+ rows | limit/offset (deep-scans late pages; `/analytics/events` keeps it — bounded window) | Breaking response-shape change → client updated in lockstep; composite index + `id` tiebreak | Every list call fetches the full table |
+| 26 | Conditional Caching (304/ETag) | Deferred — keep `no-store` on authenticated requests; no ETag | Auth'd data must stay out of shared caches (private/no-store); revalidation saves bandwidth, not the DB work that pagination (Decision 25) fixes; no cheap source of truth yet | Implement an ETag on `GET /api/urls` now | None today (deferral) — revisit if polling frequency justifies a `MAX(updated_at)`-keyed ETag | Polling stays bandwidth-heavy (acceptable at current frequency) |
 
 ---
 
@@ -150,6 +160,12 @@ Math at scale:
 **Critical Implementation Detail:**
 The `clickQueue.add()` must NOT be awaited. If you accidentally `await` it, you've defeated the entire architecture.
 
+> **Amended 2026-08-04 (Decision 21):** the async write is now *dedup-safe*. Every click is
+> minted a stable `clickId` in the redirect handler and that id is reused as the BullMQ `jobId`
+> (queue-level dedup) and as the unique `click_id` key at insert (`ON CONFLICT DO NOTHING`,
+> DB-level backstop). Retried redirects / re-delivered / backoff-retried jobs can no longer
+> inflate analytics.
+
 **Interview Question This Answers:**
 "Walk me through why BullMQ matters for a URL shortener at scale."
 
@@ -157,34 +173,44 @@ The `clickQueue.add()` must NOT be awaited. If you accidentally `await` it, you'
 
 ### Decision 5: Token Model (Two-Token vs Single Long-Lived)
 
+> **Amended 2026-08-04:** the access-token lifetime below changed 15 min → 10 min (Decision 19),
+> and the "Can revoke tokens" claim in the table is now accurate: refresh tokens were always
+> revocable (DB row), and access tokens became revocable via the jti denylist (Decision 18).
+> Reuse detection for rotated refresh tokens is Decision 20.
+
 **Problem:**
-How to balance security (short-lived tokens) with usability (user shouldn't re-login every 15 minutes)?
+How to balance security (short-lived tokens) with usability (user shouldn't re-login every 10 minutes)?
 
 **Why Two-Token Wins:**
 
 | Two-Token | Single Long-Lived |
 |---|---|
-| ✅ Theft window is 15 min (access token) | ❌ Theft window is 30 days (massive exposure) |
+| ✅ Theft window is 10 min (access token) | ❌ Theft window is 30 days (massive exposure) |
 | ✅ Can revoke tokens (logout works) | ❌ Can't revoke (token valid until expiry) |
 | ✅ Detect suspicious patterns (refresh attempts) | ❌ No pattern detection |
 | ❌ More complex (refresh endpoint) | ✅ Simpler |
 
 **Token Pair Semantics:**
-- **Access Token:** 15 min expiry, stateless, signed with JWT_SECRET, used for API calls
-- **Refresh Token:** 30 day expiry, stored as hashed value in DB, returned in httpOnly cookie, used to get new access token
+- **Access Token:** 10 min expiry, stateless, signed with JWT_SECRET, used for API calls.
+  Revocation-capable via a `jti` denylist (Decision 18).
+- **Refresh Token:** 30 day expiry, stored as hashed value in DB, returned in httpOnly cookie, used to get new access token. Rotated on every refresh (revoke old → issue new); a presented *revoked* token triggers full-session revocation (Decision 20).
 
 **Revocation Flow:**
 ```javascript
 // User logs out
 POST /api/auth/logout
   → Mark refresh token as revoked in DB
+  → Add the access token's jti to the denylist (TTL = remaining life) [Decision 18]
   → Clear cookie
   → Future refresh attempts fail
+  → Future use of the same access token fails
 
-// Stolen access token (15 min window)
-  → Can use for 15 min max
+// Stolen access token (10 min window)
+  → Can use for 10 min max
   → Then expires, attacker needs refresh token
   → But refresh token is in secure httpOnly cookie (can't steal via XSS)
+  → If the attacker stole the refresh token too and used it after logout,
+    the reuse detection (Decision 20) revokes every session for that user
 ```
 
 **Why httpOnly Cookie (Not localStorage):**
@@ -291,6 +317,13 @@ for (let i = 0; i < 1000000; i++) {
 ```
 
 **Rule:** Both "not found" and "unauthorized" return 404. Implementation is identical.
+
+> **Amended 2026-08-04 (Decision 23):** this resource-level "404, never 403/404-leak" rule is
+> unchanged. It is distinct from *method-level* 404s: a known path with an unsupported HTTP
+> method now returns **405 + `Allow`** (a route exists at that path; Fastify's
+> `setNotFoundHandler({ methodNotAllowed: true })` detects it via `request.routerMethod`). The
+> two cases differ because the route table is already public (Swagger UI is served), so a 405
+> reveals nothing an attacker can't read from `/docs`.
 
 **Interview Question This Answers:**
 "Why return 404 instead of 403 for unauthorized access?"
@@ -552,8 +585,8 @@ user ever generated.
    implementation omitted this step.
 
 **Auth requirement:** the endpoint (`DELETE /api/auth/account`) requires the current
-password in the body, not just a valid access token — an access token alone (15-min,
-stateless, can't be revoked) is not enough authorization for an irreversible action.
+password in the body, not just a valid access token — an access token alone (10-min,
+stateless) is not enough authorization for an irreversible action.
 
 **Interview Question This Answers:**
 "How do you let a user delete their account without destroying analytics history for
@@ -694,7 +727,7 @@ gap, and why not just lock the account after N failures?"
 **Added:** 2026-07-17, when wiring the frontend delete-account UI to `DELETE /api/auth/account`.
 
 **Problem:**
-The client fetch wrapper (`client/src/lib/api-client.ts`) treats a `401` as "the 15-minute
+The client fetch wrapper (`client/src/lib/api-client.ts`) treats a `401` as "the 10-minute
 access token expired": it runs a single-flight silent refresh, retries the request once, and —
 if it is *still* 401 — clears the token and logs the user out. That assumption breaks for
 `DELETE /api/auth/account`, which returns `401 { error: "Invalid password" }` when the
@@ -746,6 +779,322 @@ string-matching the error message?"
 
 ---
 
+### Decision 18: Access-Token Revocation — jti Denylist (Valkey, TTL'd, Fail-Open)
+
+**Added:** 2026-08-04. Closes security-audit finding **SEC-002**.
+
+**Problem:**
+Logout (and account deletion) revokes the refresh token, but the stateless access
+token was verified by signature only — it survived logout until expiry. The security audit
+called this out explicitly: a just-deleted/deactivated account keeps API access for the full
+access-token lifetime because `authenticate()` never loads the user row.
+
+**The motivating scenario:**
+> An attacker steals the access token (the user copies both tokens, or XSS-era exfiltration).
+> The user logs out. The refresh token dies instantly. The access token keeps authorizing
+> `POST /api/urls` and reads of owned analytics for up to its full lifetime (10 min under
+> Decision 19). During that window the attacker — or the just-deleted account — can still act.
+
+**Why the jti denylist wins:**
+
+| jti denylist (chosen) | Server-side session / token-version (`sid`) |
+|---|---|
+| ✅ One claim + one TTL'd cache write on logout; one `GET` per authed request | ✅ Authoritative even when Valkey is down |
+| ✅ Access token stays stateless — no session read on the hot path | ❌ Every request becomes a session read (DB or cache) — statelessness is gone |
+| ✅ Bounded degradation: Valkey down ⇒ revoked token usable ≤ its remaining TTL | ❌ Session state must be created, cached, and invalidated |
+
+**The fail-open trade-off (locked, documented):**
+Redis/Valkey is a cache, never the authority. If Valkey is unreachable, the denylist lookup
+*fails open* (exactly like `rateLimitCheck` in `plugins/cache.ts`): a revoked access token
+works for at most its remaining TTL. This is a deliberate availability-over-strictness choice,
+bounded to ≤10 min by Decision 19.
+
+**Future backstop (designed, not built):** a `revoked_tokens` table
+(`jti` PK, `user_id`, `expires_at`, `created_at`) consulted **only when the Valkey lookup
+errors**, so revocation stays authoritative during a Redis outage — correctness at the cost of
+a DB read in the degraded path only. Rows purged by the existing nightly expiry cron. Add it
+if strict revocation during Valkey outages becomes a hard requirement.
+
+**Interview Question This Answers:**
+"Your access token is a stateless JWT that survives logout. How do you revoke it, and what
+happens to revocation when your cache is down?"
+
+---
+
+### Decision 19: Access-Token Lifetime (15m → 10m)
+
+**Added:** 2026-08-04.
+
+**Problem:**
+Every un-revocable (or fail-open) access token has a theft window equal to its lifetime. The
+denylist from Decision 18 only *shortens effective* exposure at logout time; the lifetime still
+bounds how long a stolen token works before any revocation is even possible.
+
+**Why 10 minutes wins:**
+- Cuts the post-theft and post-logout window by a third (10 min vs 15 min).
+- Every denylist TTL written at logout shrinks with it.
+- The client already runs a silent refresh on 401 (Decision 17), so an actively-used session
+  never notices the extra refresh — the refresh round-trip is hidden and the auth endpoints
+  are rate-limited (Decision 16).
+
+**Trade-off Accepted:** one more silent-refresh round-trip per actively-used session than at
+15 min. Negligible against the security win.
+
+**Doc sweep:** all references to a 15-minute access token were updated to 10 minutes across
+`DECISIONS.md` (D5/D17), `API_CONTRACT.md`, `SYSTEM_FLOWS.md`, `url-shortener-expert-plan.md`,
+`url-shortener-system-design.md`, `sections/section-2-*`, `sections/section-3-*`,
+`server/docs/notes/exception-handling-strategy.md`, and the security-audit writeup.
+
+**Interview Question This Answers:**
+"Why 10 minutes instead of 15 — doesn't the user get logged out more often?"
+
+---
+
+### Decision 20: Refresh-Token Reuse Detection — Revoke All Sessions
+
+**Added:** 2026-08-04. Closes security-audit finding **SEC-005** (rotation race) and extends
+Decision 5's "detect suspicious patterns".
+
+**The motivating scenario:**
+> Attacker steals both tokens. User logs out: the refresh token is revoked in the DB, so the
+> attacker's copy of it is now dead. But suppose the attacker *used* the refresh token once
+> before the user noticed (rotation issued them a new pair), then the user logged out —
+> revoking only the *current* row. The attacker's newly-minted refresh token chain is still
+> alive and keeps issuing fresh access tokens for up to 30 days.
+
+**Why "revoke everything on reuse" wins:**
+`refresh()` already rotates (revoke old row → issue new pair). Today a presented token that is
+*found but already revoked* is indistinguishable from "not found" — both throw the same
+`AuthError`. Making the revoked case detectable (surface "token existed but was revoked") lets
+the server treat it as a reuse signal and revoke **every** active refresh row for that user.
+One old copy reused ⇒ the whole session family dies. This is the standard stolen-token-family
+kill-switch.
+
+**Related hardening (SEC-005):** gate rotation on the revoke's affected-row count — issue a new
+pair only when `updateMany ... where revokedAt: null` returns `count === 1`. Closes the
+check-then-revoke race where two concurrent refreshes with the same cookie both mint chains.
+
+**Trade-off Accepted:** a legitimate double-submit refresh (two tabs racing on one cookie)
+also triggers the sweep and forces a re-login. Rare, safe, and the client's silent-refresh
+single-flight already makes it rarer.
+
+**Interview Question This Answers:**
+"Rotation revokes the old token. What stops a *rotated* stolen chain from living for 30 days,
+and why does one dead token reuse kill everything?"
+
+---
+
+### Decision 21: Click-Event Idempotency (clickId + jobId + ON CONFLICT DO NOTHING)
+
+**Added:** 2026-08-04.
+
+**Problem:**
+Analytics were being inflated by duplicate click events from three independent sources:
+(1) browsers/CDNs retrying the 302 redirect, (2) BullMQ re-delivering a job after a worker
+crash/stall, (3) the 3-attempt exponential-backoff retry. Every duplicate source used a fresh
+random job id, and `click_events` had no unique constraint — the composite
+`(ip_hash, url_id, clicked_at)` unique index the docs claimed was never applied (the schema
+only has `@@index([urlId, clickedAt])`, which is a lookup index, not a uniqueness guarantee).
+
+**The motivating scenario:**
+> A flaky mobile network double-fires `GET /abc123`. Both requests 302 correctly and both
+> enqueue a click. The worker also crashes mid-job once and BullMQ re-delivers it. Result:
+> 3–4 rows for what was one human click. Every day's totals, referrer splits, and country
+> charts are quietly wrong by the retry rate.
+
+**Why "stable id, three layers" wins:**
+
+| Layer | Mechanism | Kills |
+|---|---|---|
+| Redirect handler | mint one `clickId` (uuid) | sources a fresh id per *logical* click |
+| BullMQ | `jobId = clickId` | duplicate enqueues dropped at the queue |
+| DB | unique `click_id` index + `ON CONFLICT DO NOTHING` | any survivor, even across queue loss |
+
+The DB is the single source of truth even if Valkey/BullMQ fully degrade — a duplicated job
+that bypasses both earlier layers still can't double-insert. `clickId` is precise: it does not
+over-collapse legitimate same-IP clicks in the same second (the flaw in the composite
+`ip_hash+url_id+clicked_at` approach).
+
+**Trade-off Accepted:** one uuid mint per redirect and one unique-index insert per click, plus
+a migration that backfills existing rows (`click_id` nullable + backfill pass, or generate for
+a snapshot window). Cheap relative to a corrected analytics pipeline.
+
+**Interview Question This Answers:**
+"A retried redirect can inflate click counts. Where do the duplicates come from, and how do you
+make the analytics pipeline idempotent end-to-end?"
+
+---
+
+### Decision 22: Duplicate-URL Dedup (Partial Unique Index → 409)
+
+**Added:** 2026-08-04.
+
+**Problem:**
+`POST /api/urls` without a custom alias has no `(userId, originalUrl)` constraint — a
+double-click "Create" or a client retry after a lost response produced two identical links.
+The custom-alias path was already safe (shared-namespace `@unique`), the auto-code path was not.
+
+**The motivating scenario:**
+> A user double-clicks "Shorten". Two links to the same destination appear in their dashboard,
+> each with its own analytics that split the traffic. The user has to delete one — and the
+> duplicate already consumed a short code from the shared namespace.
+
+**Why a partial unique index wins:**
+
+| Partial unique index (chosen) | Idempotency-Key header |
+|---|---|
+| ✅ Deterministic — the DB enforces it, no protocol, no client cooperation | ✅ Replays the original 201 exactly |
+| ✅ Zero added failure modes on the create path | ❌ New Valkey state + fail-open semantics + cache-vs-DB consistency questions |
+| ✅ Matches the email-`@unique` precedent (register) | ❌ Only helps clients that send the header |
+
+`(user_id, original_url) WHERE is_deleted = false` means a soft-deleted link *frees* the pair,
+so re-shortening the same URL after deletion works (consistent with soft-delete semantics,
+Decision 8). P2002 → the existing 409 envelope.
+
+**Trade-off Accepted:** DB constraint changes double-post behavior from "two links" to "409 —
+Resource already exists". A client that retries after a lost 201 now learns the link already
+exists. The Idempotency-Key header (which would return the *original* response) remains
+documented as a deferred enhancement.
+
+**Interview Question This Answers:**
+"How do you stop a double-click on 'Create' from making two identical short links?"
+
+---
+
+### Decision 23: Wrong-Method Responses — 405 vs 404 (with Allow Header)
+
+**Added:** 2026-08-04.
+
+**Problem:**
+A wrong HTTP method on a known path (e.g. `PATCH /api/auth/register`) fell through to
+Fastify's built-in 404 `{message, error, statusCode}` — which also does not match the locked
+error envelope `{error, details?, retryAfter?}`.
+
+**Why 405 (not 404-everything) wins:**
+RFC 9110 permits 404 for any unknown resource+method, and 404-everything is a legitimate
+anti-enumeration stance. But that stance only pays off when the route table is secret — here
+the full OpenAPI surface is served at `/docs`, so hiding methods reveals nothing. 405 is the
+semantically correct signal for "route exists, method unsupported", REST clients depend on it,
+and the `Allow` header tells the client exactly what it can send instead.
+
+**Chosen approach:** `app.setNotFoundHandler({ methodNotAllowed: true }, handler)` on **both**
+`api` and `redirect`:
+- Fastify sets `request.routerMethod` when a route exists at the path with a different method
+  → **405** + `Allow: GET, POST, ...` + `{ error: "Method Not Allowed" }`.
+- Otherwise → **404** `{ error: "Not Found" }`.
+Both routed through the contract envelope so the error shape is uniform. This is method-level,
+and deliberately distinct from Decision 7's resource-level ownership-404 (never reveal a
+resource exists).
+
+**Interview Question This Answers:**
+"`PATCH /api/auth/register` returns 404 today. Why switch to 405, and how do you detect the
+distinction without re-implementing routing?"
+
+---
+
+### Decision 24: Tiered Timeout Budget (the App Always Produces the 504)
+
+**Added:** 2026-08-04.
+
+**Problem:**
+There were no app-level timeouts at all. Only the geo lookup used an `AbortController` (2s).
+Prisma had `connectionTimeoutMillis` but no query timeout, BullMQ had attempts/backoff but no
+job timeout, and the nginx snippets had no `proxy_read_timeout` — so a slow upstream today
+yields **nginx's passive 60s timeout**, a 504 with no contract envelope, produced by a layer
+that can't explain what actually hung. The P1008→504 mapping in both error handlers could never
+fire because Prisma never timed out.
+
+**The motivating scenario:**
+> A transient PostgreSQL stall (lock contention, a huge aggregation query) makes one request
+> take 45 seconds. nginx sits idle for 60s then answers 504. The app logs nothing conclusive,
+> the client sees a 504 it can't correlate, and the request that was actually about to finish
+> was killed anyway. Meanwhile a stalled BullMQ job holds its lock forever because no
+> `lockDuration` is set.
+
+**Why a tiered budget (not one global timeout):**
+
+| Layer | Primitive | Failure domain |
+|---|---|---|
+| nginx | `proxy_connect_timeout` / `proxy_read_timeout` / `proxy_send_timeout` | edge backstop — give up before/after the app, never first |
+| Fastify + Node | `requestTimeout` (headers+body), `keepAliveTimeout`, `requestTimeout` | app fails a slow request with its own 504 envelope before nginx has to |
+| Outbound HTTP | shared helper on `AbortSignal.timeout(ms)` (replaces the hand-rolled geo `AbortController`) | no external call hangs forever |
+| Database | Prisma `queryTimeout` + `transactionOptions.maxWait`/`timeout` | the real 504 producer today — `AbortController` cannot cancel a Prisma query mid-flight |
+| Queue jobs | BullMQ job `timeout` + explicit Worker `lockDuration` | stalled processors get killed and retried instead of holding the lock forever |
+
+**Conclusion (locked):** `AbortController` is the right primitive for outbound HTTP only. DB
+and queue timeouts need their own primitives. The chain is ordered so the app is always the one
+answering 504 — nginx is a backstop, never the first responder.
+
+**Interview Question This Answers:**
+"Your Prisma query can hang forever and nginx 504s the client after 60s. Walk me through the
+layered timeout budget that makes the app produce the 504 instead."
+
+---
+
+### Decision 25: URL List Pagination — Keyset/Cursor + Filters
+
+**Added:** 2026-08-04. V2 of `GET /api/urls` (the v1 contract explicitly deferred pagination).
+
+**Problem:**
+`GET /api/urls` returned the user's entire URL table, hard-coded `createdAt desc`, with no
+query parameters. At scale this is an unbounded full-table fetch per dashboard poll.
+
+**The motivating scenario:**
+> A power user has 100k links. Every dashboard poll ships all 100k rows. With limit/offset,
+> the page for items 90,000–90,050 still forces the DB to scan and discard the first 90k rows
+> — O(depth) per page, degrading as the table grows.
+
+**Why keyset/cursor wins:**
+
+| Keyset/cursor (chosen) | limit/offset |
+|---|---|
+| ✅ Cursor on `(createdAt, id)` → O(1)-ish per page at any depth | ❌ Deep pages scan `offset` rows first |
+| ✅ Stable under concurrent inserts (no shifting window) | ⚠️ Inserted rows shift the window between pages |
+| ⚠️ Slightly more complex query + an `id` tiebreak | ✅ Simple |
+
+The partial index `(user_id, created_at DESC) WHERE is_deleted = false` (schema_augmentation)
+already serves the keyset order. `/analytics/events` keeps offset pagination — a documented
+inconsistency, acceptable because that endpoint is bounded to a time window.
+
+**Chosen shape:** query params `limit`, `cursor`, `dateFrom`, `dateTo`, `q` (substring on
+originalUrl/shortCode), `sortBy ∈ {createdAt, clickCount, expiresAt}`, `sortOrder ∈ {asc, desc}`
+(all whitelisted — never a raw `orderBy` passthrough). Response
+`{ urls, nextCursor, hasMore, total }`. Breaking shape change → contract v2 amended and the
+client updated in lockstep.
+
+**Interview Question This Answers:**
+"At 100k rows, offset pagination degrades. What's the pagination scheme that stays fast on page
+90,000, and where do you still accept offset?"
+
+---
+
+### Decision 26: Conditional Caching (304/ETag) — Deferred
+
+**Added:** 2026-08-04.
+
+**The scenario that makes 304 safe:**
+Conditional caching (ETag / If-None-Match) is safe for authenticated data *because
+revalidation always reaches the server* — a 304 saves bandwidth, never DB work; the server must
+still compute the list to compare. `no-store`/`private` is the non-negotiable part: two users
+behind a shared corporate proxy or Cloudflare must never be served each other's lists. The
+302 redirect path already sends `Cache-Control: no-cache`, which is correct.
+
+**Why it's deferred here:**
+Dashboard polls are not high-frequency, and the real cost of `GET /api/urls` is the unbounded
+full-table fetch — which Decision 25's pagination fixes far more effectively than a validator
+ever would. A worthwhile ETag on the list also needs a cheap source of truth (a
+`MAX(updated_at)` query) that doesn't exist yet. This is a "solve the right layer" decision:
+304 optimizes bandwidth, pagination optimizes the actual bottleneck.
+
+**Decision:** defer. Keep `no-store` on authenticated client requests. Add a
+`MAX(updated_at)`-keyed ETag on the URL list only if polling frequency justifies it.
+
+**Interview Question This Answers:**
+"Your dashboard polls an authenticated list. Is ETag/304 worth building, and why is
+'no-store' the part you must never give up?"
+
+---
+
 ## What Must Be Locked Before Day 1
 
 - [ ] All 10 decisions documented with rationale
@@ -766,3 +1115,6 @@ string-matching the error message?"
 | Caching layer | Valkey | Redis Cluster | Multi-region deployment |
 | Database | PostgreSQL single | PostgreSQL read replicas | >10K concurrent |
 | Rate limiter storage | Valkey | Dedicated instance | If Valkey becomes bottleneck |
+| Access-token revocation backstop | Valkey jti denylist only (D18) | `revoked_tokens` table consulted when Valkey is down | Strict revocation must survive cache outages |
+| Idempotency-Key header | DB-constraint dedup (D21/D22) | Valkey replay preHandler for register/login/shorten | Multi-tab / retry-heavy create flows |
+| Conditional caching (304/ETag) | `no-store`, no ETag (D26) | `MAX(updated_at)`-keyed ETag on `GET /api/urls` | Polling frequency justifies it |

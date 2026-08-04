@@ -139,7 +139,7 @@ This distinction matters architecturally. Error handling is reactive — somethi
 
 - JWT present in `Authorization: Bearer <token>` header
 - JWT signature valid against `JWT_SECRET`
-- JWT not expired (access token: 15-minute window)
+- JWT not expired (access token: 10-minute window)
 - JWT payload contains `userId` and `email`
 
 ### Failure Behaviour

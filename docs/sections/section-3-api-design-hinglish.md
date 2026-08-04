@@ -44,7 +44,7 @@ Response 201 (Success):
 {
   userId: "550e8400-e29b-41d4-a716-446655440000",  // UUID
   email: "user@example.com",
-  accessToken: "eyJhbGciOiJIUzI1NiIs...",  // JWT (15 min valid)
+  accessToken: "eyJhbGciOiJIUzI1NiIs...",  // JWT (10 min valid)
   refreshToken: "opaque_token_xyz123..."  // Store in DB (30 days)
 }
 
@@ -84,7 +84,7 @@ Response 200 (Success):
 {
   accessToken: "eyJhbGciOiJIUzI1NiIs...",
   refreshToken: "opaque_token_xyz123...",
-  expiresIn: 900  // seconds (15 minutes)
+  expiresIn: 600  // seconds (10 minutes)
 }
 
 Response 401 (Bad credentials):
@@ -133,7 +133,7 @@ Request:
 Response 200 (Success):
 {
   accessToken: "eyJhbGciOiJIUzI1NiIs...",  // NEW token
-  expiresIn: 900  // 15 min valid
+  expiresIn: 600  // 10 min valid
 }
 
 Response 401 (Token invalid/revoked):
@@ -147,7 +147,7 @@ Response 401 (Token invalid/revoked):
 Timeline:
 
 Start:
-- User login → accessToken (15 min) + refreshToken (30 days)
+- User login → accessToken (10 min) + refreshToken (30 days)
 - User ka tab open
 
 10 minutes later:

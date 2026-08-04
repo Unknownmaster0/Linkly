@@ -31,7 +31,7 @@ const authResultData = {
         email: { type: 'string', format: 'email', example: 'user@example.com' },
       },
     },
-    accessToken: { type: 'string', description: 'JWT access token (15-min expiry)' },
+    accessToken: { type: 'string', description: 'JWT access token (10-min expiry)' },
   },
 } as const;
 

@@ -1,7 +1,8 @@
 # Error Response Contract
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-04-18
+**Last Updated:** 2026-08-04 (added 405 Method Not Allowed, 503 Service Unavailable, and 504
+Gateway Timeout; added the duplicate-URL 409 scenario; added the 404-vs-405 note)
 
 ---
 
@@ -95,6 +96,37 @@ Content-Type: application/json
 **Critical Rule:**
 Both "resource doesn't exist" and "resource exists but you can't access" return 404 with identical response body. This prevents enumeration attacks.
 
+**404 vs 405 (added 2026-08-04, DECISIONS.md #23):** this resource-level 404 rule is distinct
+from *method-level* responses. A known path called with an unsupported HTTP method (e.g.
+`PATCH /api/auth/register`) now returns **405 + `Allow`** — the route exists, the method
+doesn't. See the 405 section below. The route table is already public (Swagger `/docs`), so a
+405 reveals nothing an attacker can't already read.
+
+---
+
+### 405 Method Not Allowed
+
+**When:** A route exists at the requested path, but the HTTP method is unsupported (via
+`setNotFoundHandler({ methodNotAllowed: true })` — Fastify sets `request.routerMethod`)
+
+**Response:**
+
+| Scenario | Response Body | Headers |
+|----------|---|---|
+| Route exists, method unsupported | `{ "error": "Method Not Allowed" }` | `Allow: GET, POST, ...` |
+
+**HTTP Headers:**
+```
+HTTP/1.1 405 Method Not Allowed
+Content-Type: application/json
+Allow: POST, GET, DELETE
+```
+
+**Notes:**
+- Always paired with the `Allow` header listing the methods the route actually supports.
+- Added 2026-08-04 (DECISIONS.md #23). Applied to both `api` and `redirect` services.
+- Distinct from 404 (resource-level "never reveal existence", DECISIONS.md #7).
+
 ---
 
 ### 410 Gone
@@ -131,6 +163,7 @@ Cache-Control: no-cache
 |----------|---|
 | Email already registered | `{ "error": "Email already registered", "details": { "field": "email" } }` |
 | Custom alias already in use | `{ "error": "Custom alias already in use", "details": { "field": "customAlias", "suggestedAlias": "my-project-2" } }` |
+| Same URL already shortened by this user (auto-code path) | `{ "error": "Resource already exists" }` (added 2026-08-04, DECISIONS.md #22) |
 | Unique constraint violation (any) | `{ "error": "Resource already exists", "details": { "constraint": "unique_alias" } }` |
 
 **HTTP Headers:**
@@ -210,6 +243,58 @@ Content-Type: application/json
   "error": "Internal server error"
 }
 ```
+
+---
+
+### 503 Service Unavailable
+
+**When:** The service cannot serve requests temporarily — database connection failure
+(Prisma P1001/P1017)
+
+**Response:**
+
+| Scenario | Response Body |
+|----------|---|
+| Database unreachable | `{ "error": "Service temporarily unavailable" }` |
+
+**HTTP Headers:**
+```
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json
+Retry-After: 30
+```
+
+**Notes:**
+- Added 2026-08-04 — the code already emitted this (both global error handlers map
+  P1001/P1017), the contract simply never documented it.
+- `Retry-After` gives clients a polite backoff instead of an immediate retry storm.
+
+---
+
+### 504 Gateway Timeout
+
+**When:** The request exceeded the server's time budget — Prisma query timeout (P1008), or the
+Fastify request-level timeout firing first
+
+**Response:**
+
+| Scenario | Response Body |
+|----------|---|
+| Database query exceeded its timeout | `{ "error": "Request timed out" }` |
+
+**HTTP Headers:**
+```
+HTTP/1.1 504 Gateway Timeout
+Content-Type: application/json
+Retry-After: 5
+```
+
+**Notes:**
+- Added 2026-08-04 (DECISIONS.md #24 — tiered timeout budget). The **app** produces the 504
+  envelope with its own `Retry-After`; nginx's `proxy_read_timeout` is a backstop, not the
+  first responder.
+- P1008 is Prisma's "query timed out" error; the tiered budget adds a real Prisma
+  `queryTimeout` so this mapping can actually fire.
 
 ---
 

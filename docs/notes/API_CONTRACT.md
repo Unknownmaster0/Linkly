@@ -1,8 +1,9 @@
 # API Contract — Routes & Specifications
 
 **Status:** Locked (Pre-Implementation)  
-**Last Updated:** 2026-07-16 (register/login rate limits documented + Rate Limits Reference
-table added; `DELETE /api/auth/account` added 2026-07-15)  
+**Last Updated:** 2026-08-04 (GET /api/urls v2 — cursor pagination + filters; POST /api/urls
+duplicate-URL 409; 405/504 error rows; access-token lifetime 15m → 10m; logout/account-delete
+jti revocation side effects)  
 **Base URL:** `http://localhost:3000` (development) | `https://api.short.url` (production)
 
 ---
@@ -187,7 +188,7 @@ curl -X POST http://localhost:3000/api/auth/refresh \
       "id": "cuid_user_id",
       "email": "user@example.com"
     },
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... (new, 15 min expiry)"
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... (new, 10 min expiry)"
   }
 }
 ```
@@ -207,8 +208,10 @@ Set-Cookie: refreshToken=eyJhbGciOiJIUzI1NiIs... (new, 30 day expiry); HttpOnly;
 
 **Notes:**
 - Browser automatically sends `refreshToken` cookie; no manual header needed
-- New access token has 15-minute expiry
+- New access token has 10-minute expiry
 - New refresh token is issued (and set as httpOnly cookie)
+- **Reuse detection (added 2026-08-04, DECISIONS.md #20):** presenting a previously-revoked
+  refresh token revokes *all* active refresh tokens for that user (stolen-token-family kill-switch)
 
 ---
 
@@ -245,6 +248,8 @@ Set-Cookie: refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0
 
 **Side Effects:**
 - Refresh token marked as revoked in DB
+- Access token's `jti` added to the revocation denylist in Valkey (TTL = remaining token life)
+  — the presented access token stops working immediately (added 2026-08-04, DECISIONS.md #18)
 - Cookie cleared
 - User must log in again
 
@@ -253,6 +258,7 @@ Set-Cookie: refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0
 | Status | Response |
 |--------|----------|
 | 401 | `{ "error": "Unauthorized" }` |
+| 405 | `{ "error": "Method Not Allowed" }` (wrong method on a known path — DECISIONS.md #23) |
 
 ---
 
@@ -304,8 +310,11 @@ Set-Cookie: refreshToken=; HttpOnly; Secure; SameSite=Strict; Max-Age=0
   applied per short code the account owned (DECISIONS.md #9; SEC-001).
 - All of the user's `refresh_tokens` rows are hard-deleted (no retention need; this also
   erases the account-linked raw User-Agent string stored per session).
-- Refresh cookie cleared. Any still-live access token (≤15 min old) stops working the
-  moment it's used, because subsequent auth-dependent calls re-check `isActive`.
+- Every still-live access token's `jti` is added to the revocation denylist in Valkey (TTL =
+  remaining life) — a just-deleted account's access tokens stop working immediately instead of
+  living out their lifetime (added 2026-08-04, DECISIONS.md #18; closes SEC-002).
+- Refresh cookie cleared. Any still-live access token (≤10 min old) stops working the moment
+  it's used, because its `jti` is denylisted.
 
 **Error Responses:**
 
@@ -391,8 +400,11 @@ X-RateLimit-Reset: 1713474060
 | 400 | TTL out of range | `{ "error": "TTL must be 1-365 days", "details": { "field": "ttlDays", "min": 1, "max": 365 } }` |
 | 401 | Not authenticated | `{ "error": "Unauthorized" }` |
 | 409 | Custom alias already in use | `{ "error": "Custom alias already in use", "details": { "field": "customAlias" } }` |
+| 409 | Same URL already shortened by this user (auto-code path; added 2026-08-04, DECISIONS.md #22) | `{ "error": "Resource already exists" }` |
 | 429 | Rate limit exceeded | `{ "error": "Rate limit exceeded", "retryAfter": 3600 }` |
 | 500 | Server error | `{ "error": "Internal server error" }` |
+| 405 | Wrong method on a known path (DECISIONS.md #23) | `{ "error": "Method Not Allowed" }` + `Allow` header |
+| 504 | Request exceeded the tiered timeout budget (DECISIONS.md #24) | `{ "error": "Request timed out", "retryAfter": 5 }` |
 
 **Notes:**
 - Reserved words: `api`, `health`, `docs`, `admin`, `static` (prevents routing conflicts)
@@ -411,11 +423,21 @@ X-RateLimit-Reset: 1713474060
 
 **Rate Limited:** No
 
-**Query Parameters:** None (pagination deferred to v2)
+**Query Parameters (v2 — added 2026-08-04, DECISIONS.md #25):**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | integer? | 20 | 1–100, page size |
+| `cursor` | string? | – | Opaque cursor from a previous response's `nextCursor`; keyset-paginates on `(createdAt, id)` |
+| `dateFrom` | date? | – | Inclusive lower bound on `createdAt` (`YYYY-MM-DD`) |
+| `dateTo` | date? | – | Inclusive upper bound on `createdAt` (`YYYY-MM-DD`) |
+| `q` | string? | – | Substring match on `originalUrl` / `shortCode` |
+| `sortBy` | enum? | `createdAt` | `createdAt` \| `clickCount` \| `expiresAt` (whitelist only) |
+| `sortOrder` | enum? | `desc` | `asc` \| `desc` |
 
 **Example Request:**
 ```bash
-curl -X GET http://localhost:3000/api/urls \
+curl -X GET "http://localhost:3000/api/urls?limit=20&sortBy=clickCount&sortOrder=desc" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
 ```
 
@@ -448,22 +470,38 @@ curl -X GET http://localhost:3000/api/urls \
         "isDeleted": false
       }
     ],
-    "total": 2
+    "nextCursor": "eyJrIjoiMjAyNi0wNC0xN1QxMDoyMDowMFoiLCJpZCI6IjQ4MjkiLCJsIjoyMH0",
+    "hasMore": true,
+    "total": 10500
   }
 }
 ```
+
+**Field Descriptions (v2 additions):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nextCursor` | string \| null | Pass as `cursor` for the next page; `null` when `hasMore` is false |
+| `hasMore` | boolean | Whether another page exists after this one |
+| `total` | integer | Total rows matching the current filter (all pages) |
 
 **Error Responses:**
 
 | Status | Response |
 |--------|----------|
+| 400 | `{ "error": "Invalid query parameters", "details": { "field": "<param>" } }` |
 | 401 | `{ "error": "Unauthorized" }` |
+| 405 | `{ "error": "Method Not Allowed" }` (wrong method on a known path — DECISIONS.md #23) |
+| 504 | `{ "error": "Request timed out", "retryAfter": 5 }` (DECISIONS.md #24) |
 
 **Notes:**
 - Returns only URLs belonging to authenticated user
-- `clickCount` is aggregated from Click table
+- `clickCount` is the denormalized counter column maintained by the analytics worker
+  (write-behind), not a live `COUNT(*)`
 - `isDeleted` is always false (deleted URLs excluded from list)
-- Deleted URLs excluded from results
+- Pagination is keyset/cursor-based: `nextCursor` from the previous page, not `offset`
+- Cursor ordering tiebreak is `(createdAt, id)`, so it stays stable under concurrent inserts
+- `sortBy`/`sortOrder` are strictly whitelisted — unknown values are a 400, never passed to SQL
 
 ---
 
@@ -891,6 +929,6 @@ curl -X GET http://localhost:3000/api/urls \
 ```
 
 **Token Expiry:**
-- Access token: 15 minutes
+- Access token: 10 minutes
 - If expired: use POST /api/auth/refresh to get new one
 - Refresh token: 30 days (in httpOnly cookie)

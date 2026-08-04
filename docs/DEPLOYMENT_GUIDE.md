@@ -97,6 +97,14 @@ server {
     return 301 https://$host$request_uri;
 }
 
+# Tiered timeout budget (DECISIONS.md #24): nginx is the outermost backstop.
+# nginx 504 -> client <=> Fastify request timeout -> Prisma queryTimeout.
+# App sends its own envelope+Retry-After for 504 before this ever fires.
+# proxy_read_timeout must stay comfortably ABOVE the Prisma query timeout.
+proxy_connect_timeout 5s;
+proxy_send_timeout    15s;
+proxy_read_timeout    15s;
+
 server {
     listen 443 ssl;
     server_name api.example.com;

@@ -28,7 +28,7 @@ account deletion** and a handful of **hardening** items — all MEDIUM or below.
 | ID | Sev | Path | Finding | Status |
 |----|-----|------|---------|--------|
 | [SEC-001](#sec-001) | MEDIUM | #7 | Account deletion never evicts the redirect cache — deleted links keep resolving up to the cache TTL | **FIXED — 2026-07-20** |
-| [SEC-002](#sec-002) | MEDIUM | #2 | Deleted/deactivated account keeps API access for the access-token lifetime (≤15 min); logout doesn't revoke it | **OPEN** — decision needed |
+| [SEC-002](#sec-002) | MEDIUM | #2 | Deleted/deactivated account keeps API access for the access-token lifetime (≤15 min); logout doesn't revoke it | **RESOLVED — 2026-08-04** (DECISIONS.md #18/#19) |
 | [SEC-003](#sec-003) | LOW→MED | #6 | Swagger `/docs` (full OpenAPI + UI) served unauthenticated in production | **OPEN** — proposed |
 | [SEC-004](#sec-004) | LOW | #4 | Rate limiting fails **open** when Valkey is down — including the login/register brute-force guard | **OPEN** — proposed |
 | [SEC-005](#sec-005) | LOW | #2/#7 | Refresh-token rotation has a check-then-revoke race → two live token chains from one cookie | **OPEN** — proposed |
@@ -40,34 +40,37 @@ account deletion** and a handful of **hardening** items — all MEDIUM or below.
 ## Open findings
 
 <a id="sec-002"></a>
-### [SEC-002] [OPEN — decision needed] Deleted/deactivated account keeps API access for the access-token lifetime · MEDIUM · attack path #2
+### [SEC-002] [RESOLVED — 2026-08-04] Deleted/deactivated account keeps API access for the access-token lifetime · MEDIUM · attack path #2
 
 **Files:** `api/src/middleware/auth.ts:12-43` (`authenticate`); `api/src/routes/auth.ts:252-262`
 (`logout`).
 
 **Attacker scenario:** `authenticate` verifies the JWT signature and reads `payload.userId`,
 but **never loads the user row**, so it never sees `isActive = false`. After User A deletes
-their account (which sets `isActive = false`), their still-unexpired 15-minute access token
-keeps authorizing every protected call until `exp`. `POST /api/auth/logout` (auth.ts:252-262)
+their account (which sets `isActive = false`), their still-unexpired access token keeps
+authorizing every protected call until `exp`. `POST /api/auth/logout` (auth.ts:252-262)
 revokes only the *refresh* token — the access token stays valid until it expires.
 
 **Blast radius:** Low-to-moderate, time-boxed to ≤15 min. A just-deleted user can still call
 `POST /api/urls` (creating rows owned by a now-anonymized account) and read analytics of their
-own soft-deleted URLs. No cross-tenant access. This is the standard stateless-JWT tradeoff, but
-it deserves an explicit decision now that account deletion (and, later, banning via
-`isActive`) exists.
+own soft-deleted URLs. No cross-tenant access. This is the standard stateless-JWT tradeoff.
 
 **Proof:** auth.ts:12-43 (middleware) contains no repository/DB call — the only source of
 truth for identity is the token's own `userId` claim.
 
-**Options (with tradeoffs):**
-- **(a) Accept + document** the ≤15-min window as the deletion/ban latency. Zero cost; matches
-  the current stateless design. **Recommended** unless bans become a real feature.
-- **(b) Re-check `isActive` per request** in `authenticate` via a short-TTL cached user-status
-  lookup. Kills access within seconds of deletion/ban, at the cost of a cache/DB read added to
-  every protected route (a change to the auth hot path).
+**Resolution (2026-08-04):** fixed in two parts, both locked as decisions —
+- **DECISIONS.md #18:** on logout and account deletion, every still-live access token's
+  `jti` is added to a Valkey **revocation denylist** (TTL = remaining token life).
+  `authenticate` checks the denylist (one Valkey `SISMEMBER`/`GET`) before trusting the
+  signature. Access dies at next use, not at `exp`.
+- **DECISIONS.md #19:** access-token lifetime shortened 15 min → **10 min**, shrinking the
+  theft window and every denylist TTL by a third.
+- **Fail-open trade-off (accepted, documented in #18):** if Valkey is down, a revoked token
+  stays usable until `exp` (≤10 min). The designed-but-deferred `revoked_tokens` DB backstop
+  table (Valkey down ⇒ query it instead) is recorded in the plan as a future option.
 
-**Status:** OPEN — decision needed. If (a), record it in DECISIONS.md.
+**Status:** RESOLVED — 2026-08-04. No code yet; implementation ordered behind Q1 in
+`plan/hardening-plan.md`.
 
 ---
 
@@ -126,7 +129,7 @@ for create/redirect. This is a per-limiter policy change, hence proposed, not ap
 ---
 
 <a id="sec-005"></a>
-### [SEC-005] [OPEN — proposed] Refresh-token rotation check-then-revoke race · LOW · attack path #2/#7
+### [SEC-005] [RESOLVED — 2026-08-04] Refresh-token rotation check-then-revoke race · LOW · attack path #2/#7
 
 **Files:** `api/src/services/auth.service.ts:95-125` (`refresh`); revoke is
 `api/src/repositories/auth.repository.ts:60-65` (`updateMany where revokedAt: null`).
@@ -144,11 +147,15 @@ a chain the holder already controls.
 **Proof:** the read at auth.service.ts:99-103 and the revoke at :108 are not atomic; the revoke
 returns an affected-row count that is currently ignored before new tokens are issued.
 
-**Recommended fix:** gate rotation on the revoke's affected-row count — `updateMany` returns
-`{ count }`; only issue a new pair when `count === 1`. Small change but it touches the auth
-flow, so proposed.
+**Resolution (2026-08-04):** locked as **DECISIONS.md #20**. Rotation becomes an
+"atomic-revoke-then-issue": `updateMany … where revokedAt: null`; issue a new pair **only when
+the affected-row count is exactly 1**. Any concurrent/lost race turns into a full **token-family
+revocation** — the *presented* token is already revoked (`count === 0`), so the user is treated
+as a token thief and **every** active refresh token for the account is revoked and a forced
+re-login. This converts SEC-005's duplicate-chain bug into a theft kill-switch.
 
-**Status:** OPEN — proposed.
+**Status:** RESOLVED — 2026-08-04. No code yet; implementation ordered behind Q1 in
+`plan/hardening-plan.md`.
 
 ---
 

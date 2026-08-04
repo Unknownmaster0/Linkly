@@ -63,7 +63,7 @@ Run any of these from the repo root as `npm --prefix client run <script>`.
   `register`) are server components (so they export `metadata`); the dashboard
   pages are client components (they rely on hooks/state). Client pages set their
   tab title via the `useDocumentTitle` hook.
-- **Auth = in-memory access token + silent refresh.** The 15-minute access token
+- **Auth = in-memory access token + silent refresh.** The 10-minute access token
   lives in memory (never `localStorage`); the refresh token is an httpOnly cookie
   bound to the API. `AuthProvider` runs a single-flight silent refresh on load
   and after a `401`, so a page reload keeps you signed in (one `/auth/refresh`

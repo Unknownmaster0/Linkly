@@ -152,7 +152,7 @@ Also: configure Pino logging correctly from day one. `pino-pretty` for dev, raw 
 The novice plan uses a single JWT with 1-hour expiry. An experienced engineer knows this is a security liability — a stolen JWT is valid for an hour with no revocation path.
 
 Implement proper token pair strategy:
-- **Access token:** 15-minute expiry, stateless, signed with `JWT_SECRET`
+- **Access token:** 10-minute expiry, stateless, signed with `JWT_SECRET`
 - **Refresh token:** 30-day expiry, stored as a hashed value in a `RefreshToken` DB table (so it can be revoked), returned in an `httpOnly` cookie
 
 Add a `RefreshToken` model to your Prisma schema now (or document that you're deferring it and why).

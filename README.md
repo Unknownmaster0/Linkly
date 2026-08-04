@@ -11,7 +11,7 @@ High-throughput URL shortening system with first-class click analytics. Built fo
 - Synchronous URL creation with Base62-encoded short codes generated from PostgreSQL sequences (no collision retries, enumeration-resistant)
 - Sub-10ms redirects via L1 (in-process LRU) → L2 (Valkey) → L3 (PostgreSQL) cache-aside lookup with 302 temporary redirects (not 301, to preserve analytics on every click)
 - Asynchronous click analytics via BullMQ queue — IP geolocation, User-Agent parsing, and click event insertion never block redirect latency (fire-and-forget pattern)
-- JWT-based authentication with 15-minute access tokens (in-memory on client) and Argon2id-hashed refresh tokens stored in PostgreSQL (revocable, enables session management)
+- JWT-based authentication with 10-minute access tokens (in-memory on client) and Argon2id-hashed refresh tokens stored in PostgreSQL (revocable, enables session management)
 - Per-URL analytics: click counts, geographic breakdown, referrer tracking, device classification, time-series aggregation
 
 ---
@@ -480,7 +480,7 @@ All services use **Pino** with `pino-pretty` for structured JSON logging in deve
 **Authentication failures:**
 - Verify `JWT_SECRET` is set in API server `.env`
 - Check refresh token cookie is being sent (`credentials: "include"` in client fetch)
-- Ensure token hasn't expired (access token: 15 min, refresh token: 30 days)
+- Ensure token hasn't expired (access token: 10 min, refresh token: 30 days)
 
 ### Performance Troubleshooting
 

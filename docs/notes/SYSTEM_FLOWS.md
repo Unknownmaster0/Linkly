@@ -121,6 +121,13 @@ flowchart TD
     end
 ```
 
+**Click dedup (added 2026-08-04, DECISIONS.md #21):** the fire-and-forget enqueue above now
+carries a client-generated `clickId`. BullMQ dedupes by `jobId = clickId`, and the worker's
+insert is protected by a unique index on `click_events.clickId` with `ON CONFLICT DO NOTHING`
+— so a double-fired or retried enqueue can never double-count a click. Note the dedup scope:
+one `clickId` dedupes one click across retries; **intra-click-impression dedup (e.g. per
+session) is explicitly out of scope.**
+
 ---
 
 ## Flow 3: Click Processing (Background Worker)
@@ -375,13 +382,13 @@ about a minute."
 
 ```mermaid
 graph LR
-    A["User logs in<br/>POST /api/auth/login"] --> B["Generate tokens<br/>Access: 15min<br/>Refresh: 30d"]
+    A["User logs in<br/>POST /api/auth/login"] --> B["Generate tokens<br/>Access: 10min<br/>Refresh: 30d"]
     
     B --> C["Send response<br/>accessToken in JSON<br/>refreshToken in<br/>httpOnly cookie"]
     
     C --> D["Client uses accessToken<br/>for API calls"]
     
-    D --> E["Access token<br/>expires<br/>after 15 min"]
+    D --> E["Access token<br/>expires<br/>after 10 min"]
     
     E --> F{"Client<br/>retries<br/>request"}
     
@@ -411,9 +418,20 @@ graph LR
     
     O["User logs out"] --> P["POST /api/auth/logout"]
     P --> Q["Mark refresh token<br/>as revoked in DB"]
-    Q --> R["Clear cookie"]
+    Q --> Q2["Add access token's jti<br/>to Valkey denylist<br/>TTL = remaining life"]
+    Q2 --> R["Clear cookie"]
     R --> S["Next attempt<br/>with old token fails"]
 ```
+
+**Token-revocation behavior (added 2026-08-04, DECISIONS.md #18):** the access token is
+stateless, so logout/account-deletion can't kill it by revoking the DB-backed refresh token
+alone. Logout now pushes the access token's `jti` to a Valkey **denylist** (TTL = remaining
+life); `authenticate` checks the denylist before trusting the signature, so a logged-out
+token dies at its next use instead of living out its ≤10 min (DECISIONS.md #19). Fail-open:
+if Valkey is down, the token survives to `exp`. Rotation (POST /api/auth/refresh) is
+atomic-revoke-then-issue (DECISIONS.md #20): if the presented token is already revoked
+(`count === 0`), **all** refresh tokens for the account are revoked and the user is forced to
+re-login — the SEC-005 race is repurposed as a theft kill-switch.
 
 **Client-side 401 handling (implemented — see DECISIONS.md #17):** the client runs the
 refresh + retry above on *any* 401, then logs out **only if the refresh itself fails**. A 401

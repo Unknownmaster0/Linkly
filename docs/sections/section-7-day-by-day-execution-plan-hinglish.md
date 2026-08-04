@@ -73,7 +73,7 @@
 
 2. Create middleware/auth.ts:
    - hashPassword() using Argon2id
-   - generateAccessToken() for 15-min JWT
+   - generateAccessToken() for 10-min JWT
    - generateRefreshToken() (opaque string)
    - verifyAccessToken()
 

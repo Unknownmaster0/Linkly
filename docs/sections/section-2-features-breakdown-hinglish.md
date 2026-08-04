@@ -166,7 +166,7 @@ User click kare
 ```
 JWT Architecture:
 ┌─────────────────────────────────────────┐
-│ Access Token (15 min expiry)            │ ← User har request mein ye bhejta hai
+│ Access Token (10 min expiry)            │ ← User har request mein ye bhejta hai
 │ Stateless, signed JWT                   │
 └─────────────────────────────────────────┘
                     ↓ (expires)

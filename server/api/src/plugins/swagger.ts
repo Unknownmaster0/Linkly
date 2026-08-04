@@ -58,7 +58,7 @@ async function swaggerPlugin(app: FastifyInstance): Promise<void> {
             type: 'http',
             scheme: 'bearer',
             bearerFormat: 'JWT',
-            description: '15-minute access token. Send as `Authorization: Bearer <token>`.',
+            description: '10-minute access token. Send as `Authorization: Bearer <token>`.',
           },
           cookieAuth: {
             type: 'apiKey',
