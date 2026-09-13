@@ -1,10 +1,10 @@
-import argon2 from 'argon2';
-import jwt from 'jsonwebtoken';
-import { createHash, randomBytes } from 'crypto';
-import { config } from '../config.js';
-import { AuthError, ConflictError } from '../utils/errors.js';
-import { createAuthRepository } from '../repositories/auth.repository.js';
-import type { PrismaClient } from '../generated/prisma/client.js';
+import argon2 from "argon2";
+import jwt from "jsonwebtoken";
+import { createHash, randomBytes } from "crypto";
+import { config } from "../config.js";
+import { AuthError, ConflictError } from "../utils/errors.js";
+import { createAuthRepository } from "../repositories/auth.repository.js";
+import type { PrismaClient } from "../generated/prisma/client.js";
 
 interface AuthResult {
   user: { id: string; email: string };
@@ -13,15 +13,15 @@ interface AuthResult {
 }
 
 function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  return createHash("sha256").update(token).digest("hex");
 }
 
 function generateOpaqueToken(): string {
-  return randomBytes(32).toString('hex');
+  return randomBytes(32).toString("hex");
 }
 
 function signAccessToken(userId: string, email: string): string {
-  return jwt.sign({ userId, email }, config.JWT_SECRET, { expiresIn: '15m' });
+  return jwt.sign({ userId, email }, config.JWT_SECRET, { expiresIn: "15m" });
 }
 
 function refreshTokenExpiry(): Date {
@@ -38,14 +38,16 @@ export function createAuthService(prisma: PrismaClient) {
       email: string,
       password: string,
       name: string,
-      userAgent: string
+      userAgent: string,
     ): Promise<AuthResult> {
       const existing = await repo.findUserByEmail(email);
       if (existing !== null) {
-        throw new ConflictError('Email already registered', { field: 'email' });
+        throw new ConflictError("Email already registered", { field: "email" });
       }
 
-      const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+      const passwordHash = await argon2.hash(password, {
+        type: argon2.argon2id,
+      });
       const user = await repo.createUser({ email, passwordHash, name });
 
       const accessToken = signAccessToken(user.id, user.email);
@@ -64,19 +66,19 @@ export function createAuthService(prisma: PrismaClient) {
     async login(
       email: string,
       password: string,
-      userAgent: string
+      userAgent: string,
     ): Promise<AuthResult> {
       const user = await repo.findUserByEmail(email);
 
       // Always run a hash operation to prevent timing-based user enumeration
       if (user === null || !user.isActive) {
         await argon2.hash(password, { type: argon2.argon2id });
-        throw new AuthError('Invalid email or password');
+        throw new AuthError("Invalid email or password");
       }
 
       const valid = await argon2.verify(user.passwordHash, password);
       if (!valid) {
-        throw new AuthError('Invalid email or password');
+        throw new AuthError("Invalid email or password");
       }
 
       const accessToken = signAccessToken(user.id, user.email);
@@ -89,7 +91,11 @@ export function createAuthService(prisma: PrismaClient) {
         userAgent,
       });
 
-      return { user: { id: user.id, email: user.email }, accessToken, refreshToken };
+      return {
+        user: { id: user.id, email: user.email },
+        accessToken,
+        refreshToken,
+      };
     },
 
     async refresh(tokenValue: string, userAgent: string): Promise<AuthResult> {
@@ -101,7 +107,7 @@ export function createAuthService(prisma: PrismaClient) {
         stored.expiresAt < new Date() ||
         !stored.user.isActive
       ) {
-        throw new AuthError('Unauthorized');
+        throw new AuthError("Unauthorized");
       }
 
       // Token rotation: revoke old, issue new pair
@@ -143,12 +149,12 @@ export function createAuthService(prisma: PrismaClient) {
     async deleteAccount(userId: string, password: string): Promise<string[]> {
       const user = await repo.findUserById(userId);
       if (user === null || !user.isActive) {
-        throw new AuthError('Invalid password');
+        throw new AuthError("Invalid password");
       }
 
       const valid = await argon2.verify(user.passwordHash, password);
       if (!valid) {
-        throw new AuthError('Invalid password');
+        throw new AuthError("Invalid password");
       }
 
       return repo.deleteAccount(userId);

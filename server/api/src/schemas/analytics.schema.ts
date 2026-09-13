@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Request schema — events pagination query (?limit=&offset=)

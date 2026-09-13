@@ -1,10 +1,14 @@
-import { Prisma } from '../generated/prisma/client.js';
-import type { PrismaClient } from '../generated/prisma/client.js';
-import { encodeToBase62 } from '../utils/base62.js';
-import { config } from '../config.js';
-import { ConflictError, OwnershipError } from '../utils/errors.js';
-import { createUrlRepository } from '../repositories/url.repository.js';
-import type { CreateUrlCommand, ShortenResult, UrlListResult } from '../schemas/url.schema.js';
+import { Prisma } from "../generated/prisma/client.js";
+import type { PrismaClient } from "../generated/prisma/client.js";
+import { encodeToBase62 } from "../utils/base62.js";
+import { config } from "../config.js";
+import { ConflictError, OwnershipError } from "../utils/errors.js";
+import { createUrlRepository } from "../repositories/url.repository.js";
+import type {
+  CreateUrlCommand,
+  ShortenResult,
+  UrlListResult,
+} from "../schemas/url.schema.js";
 
 // Auto-generated short codes are re-rolled on the (astronomically rare) chance
 // that the Base62-encoded sequence value collides with an existing custom alias
@@ -15,13 +19,15 @@ const MAX_CODE_GEN_ATTEMPTS = 5;
 
 function isUniqueViolation(err: unknown): boolean {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
-  return (err as Prisma.PrismaClientKnownRequestError).code === 'P2002';
+  return (err as Prisma.PrismaClientKnownRequestError).code === "P2002";
 }
 
 export function createUrlService(prisma: PrismaClient) {
   const repo = createUrlRepository(prisma);
 
-  function toResult(created: Awaited<ReturnType<typeof repo.create>>): ShortenResult {
+  function toResult(
+    created: Awaited<ReturnType<typeof repo.create>>,
+  ): ShortenResult {
     // shortUrl resolves to customAlias if provided, otherwise the Base62 code
     const resolvedCode = created.customAlias ?? created.shortCode;
     return {
@@ -35,7 +41,10 @@ export function createUrlService(prisma: PrismaClient) {
   }
 
   return {
-    async createShortUrl(command: CreateUrlCommand, userId: string): Promise<ShortenResult> {
+    async createShortUrl(
+      command: CreateUrlCommand,
+      userId: string,
+    ): Promise<ShortenResult> {
       const alias = command.customAlias;
 
       // ── Custom alias path ───────────────────────────────────────────────────
@@ -47,7 +56,9 @@ export function createUrlService(prisma: PrismaClient) {
       if (alias !== undefined) {
         const existing = await repo.findByShortCodeOrAlias(alias);
         if (existing !== null) {
-          throw new ConflictError('Custom alias already in use', { field: 'customAlias' });
+          throw new ConflictError("Custom alias already in use", {
+            field: "customAlias",
+          });
         }
 
         try {
@@ -65,7 +76,9 @@ export function createUrlService(prisma: PrismaClient) {
           // (race loser). The conflict is always the user's alias — return the
           // identical envelope the pre-check would have produced.
           if (isUniqueViolation(err)) {
-            throw new ConflictError('Custom alias already in use', { field: 'customAlias' });
+            throw new ConflictError("Custom alias already in use", {
+              field: "customAlias",
+            });
           }
           throw err;
         }
@@ -99,25 +112,36 @@ export function createUrlService(prisma: PrismaClient) {
       }
 
       // Unreachable: the loop either returns or throws on the final attempt.
-      throw new ConflictError('Unable to generate a unique short code, please retry');
+      throw new ConflictError(
+        "Unable to generate a unique short code, please retry",
+      );
     },
 
     async listUrls(userId: string): Promise<UrlListResult> {
       const records = await repo.findByUserId(userId);
-      const urls = records.map((r: { shortCode: string; originalUrl: string; customAlias: string | null; expiresAt: Date | null; createdAt: Date; clickCount: bigint }) => ({
-        shortCode: r.shortCode,
-        // Mirrors toResult(): a custom alias, when present, IS the short code.
-        shortUrl: `${config.REDIRECT_URL}/${r.customAlias ?? r.shortCode}`,
-        originalUrl: r.originalUrl,
-        customAlias: r.customAlias,
-        createdAt: r.createdAt.toISOString(),
-        expiresAt: r.expiresAt?.toISOString() ?? null,
-        // clickCount is BigInt in Prisma; JSON.stringify(BigInt) throws, so the
-        // Number() conversion is non-optional. The contract types it as an integer.
-        clickCount: Number(r.clickCount),
-        // Constant: the repository already filters out soft-deleted rows.
-        isDeleted: false,
-      }));
+      const urls = records.map(
+        (r: {
+          shortCode: string;
+          originalUrl: string;
+          customAlias: string | null;
+          expiresAt: Date | null;
+          createdAt: Date;
+          clickCount: bigint;
+        }) => ({
+          shortCode: r.shortCode,
+          // Mirrors toResult(): a custom alias, when present, IS the short code.
+          shortUrl: `${config.REDIRECT_URL}/${r.customAlias ?? r.shortCode}`,
+          originalUrl: r.originalUrl,
+          customAlias: r.customAlias,
+          createdAt: r.createdAt.toISOString(),
+          expiresAt: r.expiresAt?.toISOString() ?? null,
+          // clickCount is BigInt in Prisma; JSON.stringify(BigInt) throws, so the
+          // Number() conversion is non-optional. The contract types it as an integer.
+          clickCount: Number(r.clickCount),
+          // Constant: the repository already filters out soft-deleted rows.
+          isDeleted: false,
+        }),
+      );
       return { urls, total: urls.length };
     },
 
@@ -127,7 +151,7 @@ export function createUrlService(prisma: PrismaClient) {
     // returned so the route handler can evict the matching cache key.
     async deleteUrl(
       code: string,
-      userId: string
+      userId: string,
     ): Promise<{ shortCode: string; customAlias: string | null }> {
       const record = await repo.softDeleteByCode(code, userId);
       if (!record) throw new OwnershipError();

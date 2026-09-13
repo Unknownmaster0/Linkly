@@ -1,13 +1,13 @@
-import type { PrismaClient } from '../generated/prisma/client.js';
-import { createAnalyticsRepository } from '../repositories/analytics.repository.js';
-import { OwnershipError } from '../utils/errors.js';
+import type { PrismaClient } from "../generated/prisma/client.js";
+import { createAnalyticsRepository } from "../repositories/analytics.repository.js";
+import { OwnershipError } from "../utils/errors.js";
 import type {
   AnalyticsSummary,
   AnalyticsEventsResult,
-} from '../schemas/analytics.schema.js';
+} from "../schemas/analytics.schema.js";
 
 // Resolve ISO 3166-1 alpha-2 → English country name via Intl (full ICU in Node 20).
-const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
+const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
 function countryName(code: string): string {
   try {
     return regionNames.of(code) ?? code;
@@ -30,7 +30,10 @@ export function createAnalyticsService(prisma: PrismaClient) {
   }
 
   return {
-    async getSummary(shortCode: string, userId: string): Promise<AnalyticsSummary> {
+    async getSummary(
+      shortCode: string,
+      userId: string,
+    ): Promise<AnalyticsSummary> {
       const url = await requireOwnedUrl(shortCode, userId);
 
       const [counts, daily, referrers, countries] = await Promise.all([
@@ -50,11 +53,13 @@ export function createAnalyticsService(prisma: PrismaClient) {
         last30Days: counts.last30,
         dailyBreakdown: daily,
         topReferrers: referrers,
-        countries: countries.map((c: { countryCode: string; clicks: number }) => ({
-          countryCode: c.countryCode,
-          countryName: countryName(c.countryCode),
-          clicks: c.clicks,
-        })),
+        countries: countries.map(
+          (c: { countryCode: string; clicks: number }) => ({
+            countryCode: c.countryCode,
+            countryName: countryName(c.countryCode),
+            clicks: c.clicks,
+          }),
+        ),
       };
     },
 
@@ -62,21 +67,31 @@ export function createAnalyticsService(prisma: PrismaClient) {
       shortCode: string,
       userId: string,
       limit: number,
-      offset: number
+      offset: number,
     ): Promise<AnalyticsEventsResult> {
       const url = await requireOwnedUrl(shortCode, userId);
       const { rows, total } = await repo.listEvents(url.id, limit, offset);
 
       return {
-        events: rows.map((e: { id: bigint; clickedAt: Date; countryCode: string | null; deviceType: string; browser: string | null; os: string | null; referrerDomain: string | null }) => ({
-          id: e.id.toString(),
-          clickedAt: e.clickedAt.toISOString(),
-          countryCode: e.countryCode,
-          deviceType: e.deviceType,
-          browser: e.browser,
-          os: e.os,
-          referrerDomain: e.referrerDomain,
-        })),
+        events: rows.map(
+          (e: {
+            id: bigint;
+            clickedAt: Date;
+            countryCode: string | null;
+            deviceType: string;
+            browser: string | null;
+            os: string | null;
+            referrerDomain: string | null;
+          }) => ({
+            id: e.id.toString(),
+            clickedAt: e.clickedAt.toISOString(),
+            countryCode: e.countryCode,
+            deviceType: e.deviceType,
+            browser: e.browser,
+            os: e.os,
+            referrerDomain: e.referrerDomain,
+          }),
+        ),
         total,
         limit,
         offset,
