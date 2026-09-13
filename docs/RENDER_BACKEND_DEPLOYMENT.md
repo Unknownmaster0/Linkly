@@ -18,6 +18,20 @@ The API and redirect URLs are configured as the Vercel client's API and redirect
 client is intentionally not defined in this Blueprint. Neon and Upstash remain external managed
 services and are connected using their URLs.
 
+### Billing and service plans
+
+The Blueprint itself is not a separate paid product. The service plans are explicit in
+`render.yaml`:
+
+- `linkly-api`: Free web service
+- `linkly-redirect`: Free web service
+- `linkly-worker`: `0.5c-512mb` Starter background worker, paid
+
+Render currently does not offer a Free compute plan for background workers. A payment method may
+therefore be required because the worker is paid, even though the API and redirect services use
+Free plans. Free web services can spin down after inactivity and are intended for testing or hobby
+use, not guaranteed production availability.
+
 ## Deploy with the Blueprint
 
 1. Push this repository to GitHub.

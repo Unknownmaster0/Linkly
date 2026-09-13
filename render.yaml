@@ -2,6 +2,7 @@ services:
   - type: web
     name: linkly-api
     runtime: node
+    plan: free
     rootDir: server
     buildCommand: >-
       npm ci --include=dev && npm run build:shared && (cd api && npx prisma generate &&
@@ -42,6 +43,7 @@ services:
   - type: web
     name: linkly-redirect
     runtime: node
+    plan: free
     rootDir: server
     buildCommand: >-
       npm ci --include=dev && npm run build:shared && (cd redirect && npx prisma generate) &&
@@ -70,6 +72,7 @@ services:
   - type: worker
     name: linkly-worker
     runtime: node
+    plan: 0.5c-512mb
     rootDir: server
     buildCommand: >-
       npm ci --include=dev && npm run build:shared && (cd worker && npx prisma generate) &&
