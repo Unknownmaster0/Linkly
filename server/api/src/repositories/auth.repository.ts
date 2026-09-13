@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import type { PrismaClient } from '../generated/prisma/client.js';
+import type { PrismaClient, Url } from '../generated/prisma/client.js';
 
 interface CreateUserData {
   email: string;
@@ -105,7 +105,7 @@ export function createAuthRepository(prisma: PrismaClient) {
         prisma.refreshToken.deleteMany({ where: { userId } }),
       ]);
 
-      return urlsToEvict.map((url) => url.shortCode);
+      return urlsToEvict.map((url:Url) => url.shortCode);
     },
   };
 }
