@@ -138,12 +138,12 @@ function setRefreshCookie(reply: FastifyReply, token: string): void {
   const secure = config.NODE_ENV === 'development' ? '' : '; Secure';
   reply.header(
     'Set-Cookie',
-    `refreshToken=${token}; HttpOnly; SameSite=Strict; Max-Age=${REFRESH_COOKIE_MAX_AGE}; Path=/${secure}`
+    `refreshToken=${token}; HttpOnly; SameSite=None; Max-Age=${REFRESH_COOKIE_MAX_AGE}; Path=/${secure}`
   );
 }
 
 function clearRefreshCookie(reply: FastifyReply): void {
-  reply.header('Set-Cookie', 'refreshToken=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/');
+  reply.header('Set-Cookie', 'refreshToken=; HttpOnly; SameSite=None; Max-Age=0; Path=/');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

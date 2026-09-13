@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 services:
   postgres:
     image: postgres:15
@@ -11,6 +11,8 @@ services:
       # meant to be open on the network. Change (and add a firewall rule) only
       # if a remote client genuinely needs direct access.
       - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   valkey:
     image: valkey/valkey:7
@@ -18,3 +20,9 @@ services:
     ports:
       # Bound to localhost only, same reasoning as postgres above.
       - "127.0.0.1:6379:6379"
+    volumes:
+      - valkey_data:/data
+
+volumes:
+  postgres_data:
+  valkey_data:
