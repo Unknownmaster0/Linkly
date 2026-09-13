@@ -21,3 +21,6 @@ AGENTS.md
 **/AGENTS.md
 
 .playwright-mcp/
+
+# Local-only deployment runbooks and operator notes.
+.local/

@@ -1,0 +1,97 @@
+services:
+  - type: web
+    name: linkly-api
+    runtime: node
+    rootDir: server
+    buildCommand: >-
+      npm ci --include=dev && npm run build:shared && (cd api && npx prisma generate &&
+      npx prisma migrate deploy) && npm run build:api
+    startCommand: npm run start --prefix api
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 30
+    buildFilter:
+      paths:
+        - server/api/**
+        - server/shared/**
+        - server/package.json
+        - server/package-lock.json
+        - server/tsconfig.json
+        - docs/notes/API_CONTRACT.md
+        - docs/notes/ERROR_CONTRACT.md
+        - render.yaml
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: VALKEY_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: BASE_URL
+        sync: false
+      - key: REDIRECT_URL
+        sync: false
+      - key: CLIENT_ORIGINS
+        sync: false
+      - key: SHUTDOWN_TIMEOUT_MS
+        value: "30000"
+
+  - type: web
+    name: linkly-redirect
+    runtime: node
+    rootDir: server
+    buildCommand: >-
+      npm ci --include=dev && npm run build:shared && (cd redirect && npx prisma generate) &&
+      npm run build:redirect
+    startCommand: npm run start --prefix redirect
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 30
+    buildFilter:
+      paths:
+        - server/redirect/**
+        - server/shared/**
+        - server/package.json
+        - server/package-lock.json
+        - server/tsconfig.json
+        - render.yaml
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: VALKEY_URL
+        sync: false
+      - key: SHUTDOWN_TIMEOUT_MS
+        value: "30000"
+
+  - type: worker
+    name: linkly-worker
+    runtime: node
+    rootDir: server
+    buildCommand: >-
+      npm ci --include=dev && npm run build:shared && (cd worker && npx prisma generate) &&
+      npm run build:worker
+    startCommand: npm run start --prefix worker
+    maxShutdownDelaySeconds: 120
+    buildFilter:
+      paths:
+        - server/worker/**
+        - server/shared/**
+        - server/package.json
+        - server/package-lock.json
+        - server/tsconfig.json
+        - render.yaml
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: VALKEY_URL
+        sync: false
+      - key: IP_HASH_SECRET
+        generateValue: true
+      - key: SHUTDOWN_TIMEOUT_MS
+        value: "30000"

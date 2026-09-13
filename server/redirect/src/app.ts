@@ -1,19 +1,19 @@
-import Fastify from 'fastify';
-import { config } from './config.js';
-import { redirectRoutes } from './routes/redirect.js';
-import PrismaPlugin from './db/index.js';
-import CachePlugin from './plugins/cache.js';
-import QueuePlugin from './plugins/queue.js';
-import SecurityPlugin from './plugins/security.js';
-import SwaggerPlugin from './plugins/swagger.js';
-import { Prisma } from './generated/prisma/client.js';
-import { AppError, RateLimitError } from './utils/errors.js';
+import Fastify from "fastify";
+import { config } from "./config.js";
+import { redirectRoutes } from "./routes/redirect.js";
+import PrismaPlugin from "./db/index.js";
+import CachePlugin from "./plugins/cache.js";
+import QueuePlugin from "./plugins/queue.js";
+import SecurityPlugin from "./plugins/security.js";
+import SwaggerPlugin from "./plugins/swagger.js";
+import { Prisma } from "./generated/prisma/client.js";
+import { AppError, RateLimitError } from "./utils/errors.js";
 import {
   getFastifyLoggerConfig,
   genReqId,
   REQUEST_ID_HEADER,
   REQUEST_ID_LOG_LABEL,
-} from '@url-shortener/shared';
+} from "@url-shortener/shared";
 
 export async function createApp() {
   const app = Fastify({
@@ -32,13 +32,13 @@ export async function createApp() {
     // the whole X-Forwarded-For chain, letting a caller spoof request.ip to
     // bypass the per-IP redirect rate limit or poison click analytics
     // (unique-visitor hashing + geo lookup both key off request.ip).
-    trustProxy: 'loopback',
+    trustProxy: "loopback",
   });
 
   // Echo the request id on every response (incl. 404/410/error envelopes) so a
   // failed redirect can be traced back to a single log line.
-  app.addHook('onRequest', (request, reply, done) => {
-    reply.header('X-Request-ID', request.id);
+  app.addHook("onRequest", (request, reply, done) => {
+    reply.header("X-Request-ID", request.id);
     done();
   });
 
@@ -47,6 +47,15 @@ export async function createApp() {
   await app.register(PrismaPlugin);
   await app.register(CachePlugin);
   await app.register(QueuePlugin);
+
+  app.get("/health", async (_request, reply) => {
+    await app.prisma.$queryRaw`SELECT 1`;
+    return reply.status(200).send({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      db: "ok",
+    });
+  });
 
   // Register before the redirect route (hooks `onRoute`) and neutralizes Fastify's
   // validator/serializer so the documentation `schema` doesn't alter the hot path.
@@ -59,8 +68,10 @@ export async function createApp() {
     // RateLimitError must be checked before the generic AppError branch so the
     // Retry-After header and retryAfter body field are included in the 429 response.
     if (error instanceof RateLimitError) {
-      reply.header('Retry-After', String(error.retryAfter));
-      return reply.status(429).send({ error: error.message, retryAfter: error.retryAfter });
+      reply.header("Retry-After", String(error.retryAfter));
+      return reply
+        .status(429)
+        .send({ error: error.message, retryAfter: error.retryAfter });
     }
 
     if (error instanceof AppError) {
@@ -70,26 +81,28 @@ export async function createApp() {
       // on dead links. no-cache (store but revalidate first) matches ERROR_CONTRACT.md
       // §410 and mirrors the no-cache the 302 success path already sends.
       if (error.status === 410) {
-        reply.header('Cache-Control', 'no-cache');
+        reply.header("Cache-Control", "no-cache");
       }
       return reply.status(error.status).send({ error: error.message });
     }
 
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       const code = (error as Prisma.PrismaClientKnownRequestError).code;
-      if (code === 'P1001' || code === 'P1017') {
-        reply.header('Retry-After', '30');
-        return reply.status(503).send({ error: 'Service temporarily unavailable' });
+      if (code === "P1001" || code === "P1017") {
+        reply.header("Retry-After", "30");
+        return reply
+          .status(503)
+          .send({ error: "Service temporarily unavailable" });
       }
-      if (code === 'P1008') {
-        reply.header('Retry-After', '5');
-        return reply.status(504).send({ error: 'Request timed out' });
+      if (code === "P1008") {
+        reply.header("Retry-After", "5");
+        return reply.status(504).send({ error: "Request timed out" });
       }
-      if (code === 'P2015' || code === 'P2025') {
-        return reply.status(404).send({ error: 'Not found' });
+      if (code === "P2015" || code === "P2025") {
+        return reply.status(404).send({ error: "Not found" });
       }
-      request.log.error({ err: error }, 'Unhandled Prisma error');
-      return reply.status(500).send({ error: 'Internal server error' });
+      request.log.error({ err: error }, "Unhandled Prisma error");
+      return reply.status(500).send({ error: "Internal server error" });
     }
 
     // Only Fastify's own framework errors (all carry a `FST_ERR_*` code) get
@@ -100,15 +113,17 @@ export async function createApp() {
     // a generic 500.
     const asRecord = error as Record<string, unknown>;
     const isFastifyError =
-      error instanceof Error && typeof asRecord['code'] === 'string' && asRecord['code'].startsWith('FST_ERR_');
+      error instanceof Error &&
+      typeof asRecord["code"] === "string" &&
+      asRecord["code"].startsWith("FST_ERR_");
     const statusCode =
-      isFastifyError && typeof asRecord['statusCode'] === 'number'
-        ? (asRecord['statusCode'] as number)
+      isFastifyError && typeof asRecord["statusCode"] === "number"
+        ? (asRecord["statusCode"] as number)
         : 500;
 
     if (!isFastifyError || statusCode >= 500) {
-      request.log.error({ err: error }, 'Unhandled server error');
-      return reply.status(500).send({ error: 'Internal server error' });
+      request.log.error({ err: error }, "Unhandled server error");
+      return reply.status(500).send({ error: "Internal server error" });
     }
 
     return reply.status(statusCode).send({ error: (error as Error).message });
